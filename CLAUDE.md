@@ -59,8 +59,9 @@ docs/                PROMPT (brief), PLAN, DECISIONS, BUDGET, SIGNING (identity,
 
 ## Real-time rules (audio threads: tap IO proc, plugin `process()`)
 
-The `realtime-audio-macos` skill was not installed on this Mac at Phase 0; these rules follow
-established practice and are applied with zero exceptions:
+The brief's `realtime-audio-macos` skill does not exist on this Mac; the owner installed
+`realtime-audio-architecture` (Python/PortAudio playback) instead, applied in the 2026-11-21 audit
+(docs/DECISIONS.md). These rules follow established practice and are applied with zero exceptions:
 
 1. No heap allocation or deallocation (no `new`/`malloc`/`std::vector` growth/`std::string`, no
    `std::function` captures that allocate). Preallocate everything on a non-RT thread.
@@ -76,6 +77,12 @@ established practice and are applied with zero exceptions:
 7. The plugin's audio path is bit-exact pass-through; never write different samples to the output.
 8. Atomics: writer stores data, then `store(counter, release)`; reader `load(acquire)`, copies, then
    re-reads the counter to detect a lap and discards lapped data.
+9. Tear down in order: `AudioDeviceStop` → `AudioDeviceDestroyIOProcID` → destroy the aggregate →
+   destroy the tap; the plugin unmaps shm only after `deactivate`. Never free what an audio thread
+   may still touch.
+10. Capture follows the output device: rebuild the tap on default-output, device-death, sample-rate
+    or tap-format changes, off the main thread. Threads that feed the display run at
+    user-interactive QoS, never background. Failures surface in the UI; no silent fallback.
 
 ## Conventions
 

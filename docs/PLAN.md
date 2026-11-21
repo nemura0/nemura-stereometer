@@ -48,7 +48,10 @@ Legend: `[x]` done and verified, `[~]` in progress / partially verified, `[ ]` n
 ## Phase 3: app
 
 - [ ] Overlay window: transparent, click-through, all Spaces, hover controls, size presets
-- [ ] Process tap: output-device changes, permission flow, silent-buffer detection
+- [ ] Process tap: output-device changes (default output, device death, sample rate, tap format;
+      rebuild off the main thread), only the tap's streams on for the IO proc (an output device
+      with inputs, e.g. VB-Cable, must not count as microphone use), permission flow, silent-buffer
+      detection
 - [ ] UI: source picker, menu-bar popover, Settings window, preset import/export, hotkeys,
       frame-rate setting, `--feed`
 
