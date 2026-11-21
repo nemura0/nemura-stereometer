@@ -29,7 +29,7 @@ Legend: `[x]` done and verified, `[~]` in progress / partially verified, `[ ]` n
 - [x] Settings schema (key, type, range, default, group, label) as the single source of truth
 - [x] JSON, preset files with migration
 - [x] Original colormaps and `.map` import
-- [~] C API: schema done; setting values, JSON, presets and colormaps pending
+- [x] C API: schema, setting values, JSON, presets and colormaps, with the app's Swift wrappers
 - [x] Tests: correlation (+1 identical, −1 inverted, ≈0 independent noise)
 - [x] Tests: balance, mapping, log scale
 - [x] Tests: schema round-trip; Swift ↔ C++ schema agreement

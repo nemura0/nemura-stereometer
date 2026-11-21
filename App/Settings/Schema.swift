@@ -39,6 +39,18 @@ enum Schema {
   }
 }
 
+extension SettingKey {
+  /// The entry's index in the schema, from the C API: what the C calls take. A key the schema
+  /// lacked would get an index every C call refuses (SchemaTests checks that none does).
+  var index: UInt32 { Self.indexes[self] ?? .max }
+
+  private static let indexes: [SettingKey: UInt32] = Dictionary(
+    uniqueKeysWithValues: allCases.compactMap { key in
+      let index = nmr_settings_index(key.rawValue)
+      return index >= 0 ? (key, UInt32(index)) : nil
+    })
+}
+
 extension SettingSpec {
   /// Entry `index`; nil past the end, or for a type or scope this build does not know.
   init?(index: UInt32) {
@@ -46,10 +58,10 @@ extension SettingSpec {
     guard nmr_settings_spec(index, &spec), let type = SettingType(spec.type),
       let scope = SettingScope(spec.scope)
     else { return nil }
-    self.key = string(spec.key)
-    self.label = string(spec.label)
-    self.unit = string(spec.unit)
-    self.group = string(nmr_settings_group_key(spec.group))
+    self.key = borrowedString(spec.key)
+    self.label = borrowedString(spec.label)
+    self.unit = borrowedString(spec.unit)
+    self.group = borrowedString(nmr_settings_group_key(spec.group))
     self.type = type
     self.scope = scope
     self.inPresets = spec.preset
@@ -57,7 +69,7 @@ extension SettingSpec {
     self.maximum = spec.max
     self.step = spec.step
     self.defaultValue = spec.default_value
-    self.defaultText = string(spec.default_text)
+    self.defaultText = borrowedString(spec.default_text)
     self.maxLength = Int(spec.max_length)
     self.choices = (0..<spec.choice_count).compactMap { choice in
       guard let key = nmr_settings_choice_key(index, choice),
@@ -97,8 +109,4 @@ extension SettingScope {
     default: return nil
     }
   }
-}
-
-private func string(_ text: UnsafePointer<CChar>?) -> String {
-  text.map { String(cString: $0) } ?? ""
 }
