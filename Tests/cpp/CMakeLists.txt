@@ -3,7 +3,9 @@
 # are checked on both architectures.
 add_executable(nmr_tests
   test_main.cpp
+  colormap_test.cpp
   dsp_test.cpp
+  files_test.cpp
   frame_ring_test.cpp
   presets_test.cpp
   product_config_test.cpp

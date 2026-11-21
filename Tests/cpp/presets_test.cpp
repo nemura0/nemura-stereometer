@@ -9,50 +9,23 @@
 #include <algorithm>
 #include <cstdlib>
 #include <filesystem>
-#include <fstream>
 #include <optional>
-#include <random>
 #include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <vector>
 
+#include "test_files.h"
+
 namespace fs = std::filesystem;
 namespace st = nmr::settings;
 namespace presets = nmr::presets;
+using nmr::test::TempFolder;
+using nmr::test::writeFile;
 using st::Id;
 
 namespace {
-
-// A new, empty folder in the temporary directory, removed with its contents afterwards.
-class TempFolder {
- public:
-  TempFolder() {
-    std::random_device random;
-    path_ = fs::temp_directory_path() /
-            ("nmr-presets-test-" + std::to_string(getpid()) + "-" + std::to_string(random()));
-    fs::create_directories(path_);
-  }
-  ~TempFolder() {
-    std::error_code ignored;
-    fs::remove_all(path_, ignored);
-  }
-  TempFolder(const TempFolder&) = delete;
-  TempFolder& operator=(const TempFolder&) = delete;
-
-  [[nodiscard]] const fs::path& path() const { return path_; }
-
- private:
-  fs::path path_;
-};
-
-void writeFile(const fs::path& path, std::string_view text) {
-  std::ofstream out(path, std::ios::binary);
-  out.write(text.data(), static_cast<std::streamsize>(text.size()));
-  out.close();
-  REQUIRE_FALSE(out.fail());
-}
 
 std::vector<std::string> listedNames(const fs::path& folder) {
   std::vector<std::string> names;

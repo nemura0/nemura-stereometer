@@ -72,7 +72,7 @@ struct SchemaTests {
 
     let colormap = try #require(Schema.spec(.colormap))
     #expect(colormap.defaultText == "iris")
-    #expect(colormap.maxLength == 63)
+    #expect(colormap.maxLength == 256)  // "user:" + any file name in the colormap folder
 
     let dock = try #require(Schema.spec(.dockIcon))
     #expect(dock.scope == .app)

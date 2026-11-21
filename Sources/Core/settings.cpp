@@ -1,3 +1,4 @@
+#include <nmr/colormap.h>
 #include <nmr/product_config.h>
 #include <nmr/settings.h>
 
@@ -85,6 +86,9 @@ constexpr Spec text(const char* key, Place place, const char* label, const char*
 }
 
 constexpr uint32_t kMaxNameBytes = 63;  // the transport registry's name[64]
+constexpr auto kMaxColormapKeyBytes = static_cast<uint32_t>(colormap::kMaxKeyBytes);
+static_assert(colormap::kDefaultKey.data()[colormap::kDefaultKey.size()] == '\0',
+              "the schema keeps the default colormap key as a C string");
 
 // In Id order (tested). Keys are stored in JSON: never rename one without a migration.
 constexpr Spec kSchema[] = {
@@ -111,7 +115,8 @@ constexpr Spec kSchema[] = {
     choice("auto_gain", in(Group::kLevel), "Auto-gain", kAutoGainModes, 0),
 
     choice("color_mode", in(Group::kColor), "Color mode", kColorModes, 0),
-    text("colormap", in(Group::kColor), "Colormap", "iris", kMaxNameBytes),
+    text("colormap", in(Group::kColor), "Colormap", colormap::kDefaultKey.data(),
+         kMaxColormapKeyBytes),
     color("solid_color", in(Group::kColor), "Solid color", 0x8993FFFF),
 
     flag("correlation_meter", in(Group::kMeters), "Correlation meter", true),

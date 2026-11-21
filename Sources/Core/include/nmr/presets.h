@@ -5,6 +5,7 @@
 #pragma once
 
 #include <nmr/settings_json.h>
+#include <nmr/user_files.h>
 
 #include <filesystem>
 #include <optional>
@@ -25,19 +26,17 @@ using settings::Report;
 // The user's preset folder (the real home, also inside a sandboxed host). Nothing is created.
 [[nodiscard]] std::filesystem::path directory();
 
-struct Entry {
-  std::string name;
-  std::filesystem::path path;
-};
+using Entry = UserFile;
 
-// The *.json files in `folder` (hidden files and folders skipped), named as load() names them,
-// sorted by name, ignoring case.
+// The *.json files in `folder` (the extension in any case; hidden files and folders skipped),
+// named as load() names them, sorted by name, ignoring case.
 [[nodiscard]] std::vector<Entry> list(const std::filesystem::path& folder);
 // The preset in `file`, named after the file.
 [[nodiscard]] std::optional<Preset> load(const std::filesystem::path& file, Report& report);
 // Writes `preset` to `folder` (created if needed) under fileName(), replacing a file of that
 // name atomically. Returns the file, or an empty path and `error`. Names that differ only in case
 // or Unicode normalization share a file on a default APFS volume: ask before replacing one.
+// Blocks until the file reaches the drive: call it off the main and render threads.
 std::filesystem::path save(const std::filesystem::path& folder, const Preset& preset,
                            std::error_code& error);
 // Deletes a preset file (never a folder).

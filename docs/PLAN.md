@@ -28,7 +28,7 @@ Legend: `[x]` done and verified, `[~]` in progress / partially verified, `[ ]` n
 - [x] DSP: M/S, log radius, band color, correlation, balance, auto-gain
 - [x] Settings schema (key, type, range, default, group, label) as the single source of truth
 - [x] JSON, preset files with migration
-- [ ] Original colormaps and `.map` import
+- [x] Original colormaps and `.map` import
 - [~] C API: schema done; setting values, JSON, presets and colormaps pending
 - [x] Tests: correlation (+1 identical, −1 inverted, ≈0 independent noise)
 - [x] Tests: balance, mapping, log scale
