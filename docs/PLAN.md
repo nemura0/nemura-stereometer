@@ -19,7 +19,8 @@ Legend: `[x]` done and verified, `[~]` in progress / partially verified, `[ ]` n
 - [x] CI secret export documented (`gh secret set`)
 - [x] Baseline: reference app measured
 - [x] Baseline: MiniMeters measurement prepared
-- [ ] **CHECKPOINT A** (owner: Ableton AU/VST3, FL VST3/AU/CLAP; MiniMeters Stereometer-only layout)
+- [~] **CHECKPOINT A**: Ableton Live 12 loads and draws the editor (owner, 2026-11-21); FL Studio
+      (VST3, AU, CLAP) pending; MiniMeters measured at 1512 × 949 pt, 360 pt run pending
 
 ## Phase 1: core
 

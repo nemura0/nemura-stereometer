@@ -26,7 +26,8 @@ measured yet (needs Instruments, or `powermetrics` with sudo).
 |---|---|---|---|---|---|---|
 | Reference `Stereometer.app` 1.0 | 360 × 360 pt (medium) | Lissajous, colormap | debug file | **9.8** / 9.7 / 11.2 | **91.1 MiB** (91.4) | 2026-11-21 |
 | Reference `Stereometer.app` 1.0 | 949 × 949 pt (owner's size) | Lissajous, colormap | debug file | 9.6 / 9.7 / 11.9 | 160.1 MiB (176.5) | 2026-11-21 |
-| MiniMeters 1.0.29, Stereometer only | owner sets it, about 360 pt | owner's | system audio | _pending_ | _pending_ | Checkpoint A |
+| MiniMeters 1.0.29, Stereometer only | 1512 × 949 pt (owner's window, full width) | owner's | system audio (mix via `afplay`) | 14.2 / 14.1 / 14.8 | 703.9 MiB (726.1) | 2026-11-21 |
+| MiniMeters 1.0.29, Stereometer only | 360 × 360 pt | owner's | system audio | _pending_ | _pending_ | when the owner resizes it |
 
 The **medium (360 pt) rows are the gate** for the app budget; our app is compared in its
 Lissajous-equivalent mode at the same window size.
