@@ -24,7 +24,7 @@ Legend: `[x]` done and verified, `[~]` in progress / partially verified, `[ ]` n
 
 ## Phase 1: core
 
-- [ ] SPSC ring, shm registry and ring
+- [x] SPSC ring, shm registry and ring (protocol v1: docs/DECISIONS.md)
 - [ ] DSP: M/S, log radius, band color, correlation, balance, auto-gain
 - [ ] Settings schema (key, type, range, default, group, label) as the single source of truth
 - [ ] JSON, preset files with migration
@@ -33,9 +33,10 @@ Legend: `[x]` done and verified, `[~]` in progress / partially verified, `[ ]` n
 - [ ] Tests: correlation (+1 identical, −1 inverted, ≈0 independent noise)
 - [ ] Tests: balance, mapping, log scale
 - [ ] Tests: schema round-trip; Swift ↔ C++ schema agreement
-- [ ] Tests: ring concurrency stress
-- [ ] Tests: cross-process shm via `fork`, layout check on both architectures
-- [ ] Tests: RT microbenchmark within budget
+- [x] Tests: ring concurrency stress (in process, and across processes with laps and skips)
+- [x] Tests: cross-process shm via `fork`, layout check on both architectures, and a writer
+      under the other architecture (arm64 ↔ x86_64)
+- [x] Tests: RT microbenchmark within budget (docs/BUDGET.md)
 
 ## Phase 2: renderer and NEMURA mode
 

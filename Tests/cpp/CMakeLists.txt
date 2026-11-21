@@ -4,7 +4,8 @@
 add_executable(nmr_tests
   test_main.cpp
   frame_ring_test.cpp
-  product_config_test.cpp)
+  product_config_test.cpp
+  shm_transport_test.cpp)
 target_include_directories(nmr_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/third_party")
 target_link_libraries(nmr_tests PRIVATE nmr_core nmr_warnings)
 
@@ -15,6 +16,10 @@ if("x86_64" IN_LIST CMAKE_OSX_ARCHITECTURES AND CMAKE_HOST_SYSTEM_PROCESSOR STRE
     RESULT_VARIABLE nmr_rosetta_result OUTPUT_QUIET ERROR_QUIET)
   if(nmr_rosetta_result EQUAL 0)
     add_test(NAME cpp.x86_64 COMMAND /usr/bin/arch -x86_64 $<TARGET_FILE:nmr_tests>)
+    if("arm64" IN_LIST CMAKE_OSX_ARCHITECTURES)
+      # Both slices run here, so each run also spawns a writer under the other architecture.
+      target_compile_definitions(nmr_tests PRIVATE NMR_TEST_CROSS_ARCH=1)
+    endif()
   else()
     message(WARNING "Rosetta is not installed: the x86_64 test run is skipped")
   endif()

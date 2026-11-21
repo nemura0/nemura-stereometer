@@ -50,4 +50,6 @@ MiniMeters procedure (Checkpoint A):
 
 ## Results
 
-_None yet._
+| Area | Result | Budget | How | Date |
+|---|---|---|---|---|
+| Plugin audio thread: write + publish 256 stereo frames into a shared ring, plus the owner-checked heartbeat | arm64: p50 83 ns, p99 125–167 ns; x86_64 under Rosetta: p50 42 ns, p99 125 ns | p50 ≤ 0.5 µs, p99 ≤ 2 µs | `nmr_tests` RT budget case, Release, 200k runs at user-interactive QoS, three runs each (CI checks it on both architectures; the timer resolution is 41.7 ns) | 2026-11-21 |
