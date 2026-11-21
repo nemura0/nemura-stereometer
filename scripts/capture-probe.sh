@@ -28,12 +28,12 @@ for required in "$APP" "$TOOL"; do
   fi
 done
 mkdir -p "$OUT"
-"$TOOL" tone "$OUT/probe-tone.wav" --seconds 600 --freq 1000 --dbfs -60 >/dev/null
+"$TOOL" tone "$OUT/probe-tone.wav" --seconds 120 --freq 1000 --dbfs -60 >/dev/null
 rm -f "$OUT/tap-probe.json"
 
 afplay "$OUT/probe-tone.wav" &
 player=$!
-trap 'kill "$player" 2>/dev/null || true' EXIT
+trap 'kill "$player" 2>/dev/null || true; rm -f "$OUT/probe-tone.wav"' EXIT
 
 # -W waits for the app to exit, -n starts a new instance.
 open -W -n "$APP" --args --tap-probe "$CAPTURE_SECONDS" --out "$OUT/tap-probe.json"

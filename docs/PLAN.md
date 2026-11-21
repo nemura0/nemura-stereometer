@@ -4,19 +4,19 @@ Legend: `[x]` done and verified, `[~]` in progress / partially verified, `[ ]` n
 
 ## Phase 0: scaffold and toolchain proof
 
-- [ ] Repo files: README stub, MIT LICENSE, THIRD_PARTY_NOTICES.md, CLAUDE.md, docs/PLAN.md,
+- [x] Repo files: README stub, MIT LICENSE, THIRD_PARTY_NOTICES.md, CLAUDE.md, docs/PLAN.md,
       docs/DECISIONS.md, docs/BUDGET.md, config/, .gitignore; PROMPT.md moved to docs/PROMPT.md
 - [ ] Public repo `nemura0/nemura-stereometer` created and pushed with `gh`
 - [ ] `ci.yml` on macos-26 (newest Xcode on the image) builds and runs tests
-- [ ] Hello-world CLAP pass-through with a Metal editor (runtime shaders, CAMetalDisplayLink)
-- [ ] Wrapped to VST3 + AUv2 (clap-wrapper), Universal, installed to ~/Library/Audio/Plug-Ins/*
-- [ ] auval passes
-- [ ] pluginval strictness 8 passes, arm64 and x86_64 (`arch -x86_64`), VST3 and AU
-- [ ] clap-validator passes
-- [ ] AU loads out of process in a tiny test host (`kAudioComponentInstantiation_LoadOutOfProcess`)
-- [ ] Self-signed identity created; app and plugins signed with it
-- [ ] Audio-capture permission survives a rebuild (owner approves the prompt once)
-- [ ] CI secret export documented (`gh secret set`)
+- [x] Hello-world CLAP pass-through with a Metal editor (runtime shaders, CAMetalDisplayLink)
+- [x] Wrapped to VST3 + AUv2 (clap-wrapper), Universal, installed to ~/Library/Audio/Plug-Ins/*
+- [x] auval passes
+- [x] pluginval strictness 8 passes, arm64 and x86_64 (`arch -x86_64`), VST3 and AU
+- [x] clap-validator passes
+- [x] AU loads out of process in a tiny test host (`kAudioComponentInstantiation_LoadOutOfProcess`)
+- [x] Self-signed identity created; app and plugins signed with it
+- [x] Audio-capture permission survives a rebuild (owner approves the prompt once)
+- [x] CI secret export documented (`gh secret set`)
 - [ ] Baseline: reference app measured
 - [ ] Baseline: MiniMeters measurement prepared
 - [ ] **CHECKPOINT A** (owner: Ableton AU/VST3, FL VST3/AU/CLAP; MiniMeters Stereometer-only layout)
@@ -66,4 +66,5 @@ Legend: `[x]` done and verified, `[~]` in progress / partially verified, `[ ]` n
 - [ ] `release.yml` on `v*`: build, test, validate, sign, package, GitHub Release + SHA-256
 - [ ] Homebrew tap `nemura0/homebrew-tap` (casks `stereometer`, `stereometer-plugins`, self-updating)
 - [ ] README (English): features, install, unsigned-app steps, permission/privacy, DAW usage, build
+- [ ] `scripts/rename.sh` renames the product in one step (§3)
 - [ ] **CHECKPOINT D** (release draft + README; then tag v1.0.0 and publish)

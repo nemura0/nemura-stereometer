@@ -18,6 +18,7 @@ scripts/validate.sh              # auval, pluginval (arm64 + x86_64), clap-valid
 scripts/gen-config.sh [--check]  # regenerate Sources/Core/include/nmr/product_config.h
 scripts/fetch-deps.sh            # pinned CLAP / clap-wrapper / VST3 SDK / AudioUnitSDK into external/
 scripts/check-sources.sh         # CMake and SwiftPM compile the same Sources/{Core,Render,CoreC}
+scripts/capture-probe.sh [s]     # end-to-end system-audio capture check with the built app (0 = audio arrived)
 scripts/perf.sh                  # CPU / memory / frame-pacing measurements (docs/BUDGET.md)
 ```
 
@@ -35,6 +36,7 @@ App/                 Swift 6 app (SwiftPM target), bundled by scripts/bundle-app
 Plugin/              CLAP plugin + editor NSView (ObjC++), clap-wrapper targets
 Tests/               doctest (C++), Swift Testing, host tests (null test, out-of-process AU)
 external/            fetched SDKs (gitignored, pinned in scripts/fetch-deps.sh)
+docs/                PROMPT (brief), PLAN, DECISIONS, BUDGET, SIGNING (identity, CI secrets)
 ```
 
 ## Invariants (do not break)
