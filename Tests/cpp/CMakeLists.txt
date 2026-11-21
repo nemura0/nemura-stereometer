@@ -3,6 +3,7 @@
 # are checked on both architectures.
 add_executable(nmr_tests
   test_main.cpp
+  dsp_test.cpp
   frame_ring_test.cpp
   product_config_test.cpp
   shm_transport_test.cpp)

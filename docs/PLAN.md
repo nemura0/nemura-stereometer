@@ -25,13 +25,13 @@ Legend: `[x]` done and verified, `[~]` in progress / partially verified, `[ ]` n
 ## Phase 1: core
 
 - [x] SPSC ring, shm registry and ring (protocol v1: docs/DECISIONS.md)
-- [ ] DSP: M/S, log radius, band color, correlation, balance, auto-gain
+- [x] DSP: M/S, log radius, band color, correlation, balance, auto-gain
 - [ ] Settings schema (key, type, range, default, group, label) as the single source of truth
 - [ ] JSON, preset files with migration
 - [ ] Original colormaps and `.map` import
 - [ ] C API
-- [ ] Tests: correlation (+1 identical, −1 inverted, ≈0 independent noise)
-- [ ] Tests: balance, mapping, log scale
+- [x] Tests: correlation (+1 identical, −1 inverted, ≈0 independent noise)
+- [x] Tests: balance, mapping, log scale
 - [ ] Tests: schema round-trip; Swift ↔ C++ schema agreement
 - [x] Tests: ring concurrency stress (in process, and across processes with laps and skips)
 - [x] Tests: cross-process shm via `fork`, layout check on both architectures, and a writer
@@ -41,7 +41,8 @@ Legend: `[x]` done and verified, `[~]` in progress / partially verified, `[ ]` n
 ## Phase 2: renderer and NEMURA mode
 
 - [ ] Shared renderer: all modes, view options, color modes, shapes, lines, glow, guides, meters
-- [ ] Paced playhead, Auto frame rate, idle stop
+- [ ] Paced playhead, Auto frame rate, idle stop; the render thread runs the DSP with FTZ/DAZ
+      in the x86_64 slice (its filters decay into subnormals in silence)
 - [ ] `scripts/snapshots.sh` renders offscreen PNGs per mode from a test WAV
 - [ ] NEMURA mode: 3 original concepts, a snapshot of each
 - [ ] **CHECKPOINT B** (snapshots, pacing stats, Instant calibrated against the reference)
