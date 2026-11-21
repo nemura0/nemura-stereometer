@@ -6,8 +6,8 @@ Legend: `[x]` done and verified, `[~]` in progress / partially verified, `[ ]` n
 
 - [x] Repo files: README stub, MIT LICENSE, THIRD_PARTY_NOTICES.md, CLAUDE.md, docs/PLAN.md,
       docs/DECISIONS.md, docs/BUDGET.md, config/, .gitignore; PROMPT.md moved to docs/PROMPT.md
-- [ ] Public repo `nemura0/nemura-stereometer` created and pushed with `gh`
-- [ ] `ci.yml` on macos-26 (newest Xcode on the image) builds and runs tests
+- [x] Public repo `nemura0/nemura-stereometer` created and pushed with `gh`
+- [x] `ci.yml` on macos-26 (newest Xcode on the image) builds and runs tests
 - [x] Hello-world CLAP pass-through with a Metal editor (runtime shaders, CAMetalDisplayLink)
 - [x] Wrapped to VST3 + AUv2 (clap-wrapper), Universal, installed to ~/Library/Audio/Plug-Ins/*
 - [x] auval passes
