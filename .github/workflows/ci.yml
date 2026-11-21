@@ -1,0 +1,71 @@
+# Builds the Universal plugins, the C++ tests and the app, then runs every test.
+#
+# The signing identity is not available here, so scripts/sign.sh signs ad-hoc (docs/SIGNING.md).
+# The required job uses the macos-26 image with the newest Xcode on it. The Xcode 27 image is a
+# GitHub preview: its job reports results but never fails the workflow (docs/DECISIONS.md).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    continue-on-error: ${{ matrix.preview }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS 26, newest Xcode
+            runner: macos-26
+            preview: false
+          - name: Xcode 27 (preview image)
+            runner: xcode-27
+            preview: true
+    env:
+      NMR_WERROR: "ON"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Select the newest Xcode on the image
+        run: |
+          xcode="$(ls -d /Applications/Xcode_*.app | grep -viE 'beta|release.?candidate|_rc' | sort -V | tail -1)"
+          sudo xcode-select -s "$xcode"
+          xcodebuild -version
+          swift --version
+          cmake --version | head -1
+
+      - name: Install Rosetta (x86_64 test run)
+        run: |
+          if ! /usr/bin/arch -x86_64 /usr/bin/true 2>/dev/null; then
+            sudo softwareupdate --install-rosetta --agree-to-license
+          fi
+
+      - name: Cache pinned SDKs
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: external
+          key: sdks-${{ runner.os }}-${{ hashFiles('scripts/fetch-deps.sh') }}
+
+      - name: Build plugins, C++ tests and app
+        run: scripts/build.sh all
+
+      - name: CMake and SwiftPM compile the same sources
+        run: scripts/check-sources.sh
+
+      - name: Test
+        run: scripts/build.sh test
