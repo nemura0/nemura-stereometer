@@ -102,7 +102,9 @@ fs::path save(const fs::path& folder, const Preset& preset, std::error_code& err
   return files::write(folder, fileName(preset.name), settings::encodePreset(preset), error);
 }
 
-bool remove(const fs::path& file, std::error_code& error) { return files::remove(file, error); }
+bool remove(const fs::path& file, std::error_code& error) {
+  return files::remove(file, ".json", error);
+}
 
 std::string fileName(std::string_view name) {
   return files::fileName(name, settings::kMaxPresetNameBytes, "Preset", ".json");

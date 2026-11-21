@@ -39,7 +39,8 @@ using Entry = UserFile;
 // Blocks until the file reaches the drive: call it off the main and render threads.
 std::filesystem::path save(const std::filesystem::path& folder, const Preset& preset,
                            std::error_code& error);
-// Deletes a preset file (never a folder).
+// Deletes a preset file: one ending in .json in any case (anything else fails with
+// invalid_argument and is left alone), never a folder.
 bool remove(const std::filesystem::path& file, std::error_code& error);
 
 // A safe file name for a preset name: no '/', ':' or control characters, no leading dots or

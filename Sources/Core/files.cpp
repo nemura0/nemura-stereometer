@@ -179,8 +179,12 @@ fs::path write(const fs::path& folder, std::string_view name, std::string_view t
   return file;
 }
 
-bool remove(const fs::path& file, std::error_code& error) {
+bool remove(const fs::path& file, std::string_view extension, std::error_code& error) {
   error.clear();
+  if (lowered(file.extension().string()) != extension) {
+    error = std::make_error_code(std::errc::invalid_argument);
+    return false;
+  }
   if (::unlink(file.c_str()) != 0) {  // a folder fails (EPERM); fs::remove would delete it
     error = lastError();
     return false;

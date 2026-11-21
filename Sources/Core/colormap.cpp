@@ -323,7 +323,9 @@ fs::path importMap(const fs::path& folder, const fs::path& source, Report& repor
   return files::write(folder, name, formatMap(*stops), error);
 }
 
-bool remove(const fs::path& file, std::error_code& error) { return files::remove(file, error); }
+bool remove(const fs::path& file, std::error_code& error) {
+  return files::remove(file, ".map", error);
+}
 
 std::string userKey(std::string_view name) {
   std::string key(kUserPrefix);

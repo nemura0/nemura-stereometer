@@ -213,7 +213,7 @@ TEST_CASE("preset files: a preset is named after its file, shown without control
   CHECK(listed == std::vector<std::string>{"BadName", "Renamed", long_name});
 }
 
-TEST_CASE("preset files: remove deletes preset files, never folders") {
+TEST_CASE("preset files: remove deletes preset files, never folders or other files") {
   TempFolder temp;
   const fs::path folder = temp.path() / "Empty.json";
   fs::create_directory(folder);
@@ -221,6 +221,22 @@ TEST_CASE("preset files: remove deletes preset files, never folders") {
   CHECK_FALSE(presets::remove(folder, error));
   CHECK(error);
   CHECK(fs::is_directory(folder));
+
+  const fs::path other = temp.path() / "Notes.txt";
+  writeFile(other, "keep");
+  CHECK_FALSE(presets::remove(other, error));
+  CHECK(error == std::errc::invalid_argument);
+  CHECK(fs::exists(other));
+  const fs::path bare = temp.path() / "json";
+  writeFile(bare, "keep");
+  CHECK_FALSE(presets::remove(bare, error));
+  CHECK(fs::exists(bare));
+
+  const fs::path upper = temp.path() / "Loud.JSON";  // the list takes any case, so remove does
+  writeFile(upper, "{}");
+  CHECK(presets::remove(upper, error));
+  CHECK_FALSE(error);
+  CHECK_FALSE(fs::exists(upper));
 }
 
 TEST_CASE("preset files: a folder that cannot be written reports the error") {

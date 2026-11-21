@@ -400,6 +400,16 @@ TEST_CASE("user colormaps: imported under the source's name, listed, loaded, res
   CHECK_FALSE(cm::remove(folder, error));  // never a folder
   CHECK(error);
   CHECK(fs::is_directory(folder));
+
+  const fs::path other = temp.path() / "Notes.txt";  // never a file that is not a colormap
+  writeFile(other, "keep");
+  CHECK_FALSE(cm::remove(other, error));
+  CHECK(error == std::errc::invalid_argument);
+  CHECK(fs::exists(other));
+  const fs::path upper = folder / "Loud.MAP";
+  writeFile(upper, "[rgb(1, 2, 3); 0]");
+  CHECK(cm::remove(upper, error));
+  CHECK_FALSE(fs::exists(upper));
 }
 
 TEST_CASE("user colormaps: a source without stops, unreadable or too large is not imported") {

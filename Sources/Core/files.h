@@ -51,7 +51,9 @@ Read read(const std::filesystem::path& file, size_t max_bytes, std::string& text
 std::filesystem::path write(const std::filesystem::path& folder, std::string_view name,
                             std::string_view text, std::error_code& error);
 
-// Deletes a file (never a folder).
-bool remove(const std::filesystem::path& file, std::error_code& error);
+// Deletes a file ending in `extension` (lowercase; matched ignoring ASCII case, as list() does).
+// Anything else fails with invalid_argument and is left alone; a folder is never deleted.
+bool remove(const std::filesystem::path& file, std::string_view extension,
+            std::error_code& error);
 
 }  // namespace nmr::files

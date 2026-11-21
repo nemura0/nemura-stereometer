@@ -103,7 +103,8 @@ struct Report {
 std::filesystem::path importMap(const std::filesystem::path& folder,
                                 const std::filesystem::path& source, Report& report,
                                 std::error_code& error);
-// Deletes a colormap file (never a folder).
+// Deletes a colormap file: one ending in .map in any case (anything else fails with
+// invalid_argument and is left alone), never a folder.
 bool remove(const std::filesystem::path& file, std::error_code& error);
 
 // The setting key of the user colormap listed as `name`.
