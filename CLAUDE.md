@@ -49,6 +49,9 @@ docs/                PROMPT (brief), PLAN, DECISIONS, BUDGET, SIGNING (identity,
   which appends the per-target suffix (`_Clap`, `_Vst3`, `_Au`, `_App`, `_Test`). Hosts may load
   all three plugin formats into one process. No Swift in plugins; `-fvisibility=hidden`.
 - No host-automatable parameters in v1. Plugin settings = versioned JSON state.
+- Settings live in one schema table (`Sources/Core/settings.cpp`, `Id` order). Setting keys and
+  choice keys are stored in plugin state and presets: renaming one needs a migration step
+  (`Sources/Core/settings_migration.h`) and a version bump. Swift's `SettingKey` follows (SchemaTests).
 - Plugin → app transport is POSIX shm only (`/nmr.stm.reg`, `/nmr.stm.r<slot>`), names ≤ 31 chars,
   mode 0600. Protocol layout is versioned; change the version on any layout change.
 - All product names/IDs come from `config/product.env`. Never hardcode them elsewhere.

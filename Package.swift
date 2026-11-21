@@ -50,7 +50,7 @@ let package = Package(
     ),
     .testTarget(
       name: "AppTests",
-      dependencies: ["NMRCoreC"],
+      dependencies: ["App", "NMRCoreC"],
       path: "Tests/Swift"
     ),
   ],

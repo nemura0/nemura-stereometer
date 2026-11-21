@@ -5,9 +5,15 @@ add_executable(nmr_tests
   test_main.cpp
   dsp_test.cpp
   frame_ring_test.cpp
+  presets_test.cpp
   product_config_test.cpp
+  settings_test.cpp
   shm_transport_test.cpp)
-target_include_directories(nmr_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/third_party")
+# Core-internal headers (settings_migration.h) and nlohmann/json, which the migration tests use.
+target_include_directories(nmr_tests PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/third_party"
+  "${CMAKE_SOURCE_DIR}/Sources/Core"
+  "${CMAKE_SOURCE_DIR}/Sources/Core/third_party")
 target_link_libraries(nmr_tests PRIVATE nmr_core nmr_warnings)
 
 add_test(NAME cpp.native COMMAND nmr_tests)

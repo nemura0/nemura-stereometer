@@ -26,13 +26,13 @@ Legend: `[x]` done and verified, `[~]` in progress / partially verified, `[ ]` n
 
 - [x] SPSC ring, shm registry and ring (protocol v1: docs/DECISIONS.md)
 - [x] DSP: M/S, log radius, band color, correlation, balance, auto-gain
-- [ ] Settings schema (key, type, range, default, group, label) as the single source of truth
-- [ ] JSON, preset files with migration
+- [x] Settings schema (key, type, range, default, group, label) as the single source of truth
+- [x] JSON, preset files with migration
 - [ ] Original colormaps and `.map` import
-- [ ] C API
+- [~] C API: schema done; setting values, JSON, presets and colormaps pending
 - [x] Tests: correlation (+1 identical, −1 inverted, ≈0 independent noise)
 - [x] Tests: balance, mapping, log scale
-- [ ] Tests: schema round-trip; Swift ↔ C++ schema agreement
+- [x] Tests: schema round-trip; Swift ↔ C++ schema agreement
 - [x] Tests: ring concurrency stress (in process, and across processes with laps and skips)
 - [x] Tests: cross-process shm via `fork`, layout check on both architectures, and a writer
       under the other architecture (arm64 ↔ x86_64)

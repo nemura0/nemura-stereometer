@@ -15,6 +15,56 @@ const char* nmr_version(void);
 // Product display name, e.g. "NEMURA Stereometer". Static storage.
 const char* nmr_product_name(void);
 
+// ---- Settings schema ---------------------------------------------------------------------------
+// The shared settings schema (Sources/Core/include/nmr/settings.h): every setting with its key,
+// type, range, default, group and label, in a fixed order. Strings are static NUL-terminated
+// UTF-8. Indexes out of range give false or NULL.
+
+typedef enum nmr_setting_type {
+  NMR_SETTING_BOOL,
+  NMR_SETTING_INT,
+  NMR_SETTING_FLOAT,
+  NMR_SETTING_CHOICE,
+  NMR_SETTING_COLOR,  // 0xRRGGBBAA
+  NMR_SETTING_TEXT,
+} nmr_setting_type;
+
+typedef enum nmr_setting_scope {
+  NMR_SCOPE_SHARED,  // the app and the plugin
+  NMR_SCOPE_APP,
+  NMR_SCOPE_PLUGIN,
+} nmr_setting_scope;
+
+typedef struct nmr_setting_spec {
+  const char* key;  // stable JSON key, snake_case
+  const char* label;
+  const char* unit;  // "" when unitless
+  uint32_t group;    // for nmr_settings_group_key / _label
+  nmr_setting_type type;
+  nmr_setting_scope scope;
+  bool preset;  // stored in presets
+  double min;   // int and float; choice 0 ... count - 1; color 0 ... 0xFFFFFFFF
+  double max;
+  double step;           // the UI's step
+  double default_value;  // bool 0/1, choice index, color 0xRRGGBBAA
+  const char* default_text;  // text
+  uint32_t max_length;       // text: bytes of UTF-8
+  uint32_t choice_count;
+  uint32_t stop_count;  // named values (the trail time's response presets)
+} nmr_setting_spec;
+
+uint32_t nmr_settings_count(void);
+bool nmr_settings_spec(uint32_t index, nmr_setting_spec* spec);
+// Choice `choice` of entry `index`.
+const char* nmr_settings_choice_key(uint32_t index, uint32_t choice);
+const char* nmr_settings_choice_label(uint32_t index, uint32_t choice);
+// Named value `stop` of entry `index`.
+bool nmr_settings_stop(uint32_t index, uint32_t stop, const char** label, double* value);
+
+uint32_t nmr_settings_group_count(void);
+const char* nmr_settings_group_key(uint32_t group);
+const char* nmr_settings_group_label(uint32_t group);
+
 // ---- System-output capture probe -------------------------------------------------------------
 // Captures the system output through a process tap for a while and reports what arrived. Used to
 // verify that the audio-capture permission is granted (a denied grant yields only zeros).
