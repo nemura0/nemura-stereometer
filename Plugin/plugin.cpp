@@ -82,7 +82,7 @@ Instance* self(const clap_plugin_t* plugin) { return static_cast<Instance*>(plug
 // Audio thread
 
 clap_process_status process(const clap_plugin_t*, const clap_process_t* process) {
-  [[maybe_unused]] const DenormalScope denormals;  // empty on arm64 (FTZ is the default there)
+  [[maybe_unused]] const DenormalScope denormals;  // x86_64 only; arm64 keeps FZ = 0
   const uint32_t frames = process->frames_count;
   if (process->audio_outputs_count == 0) return CLAP_PROCESS_CONTINUE;
 
