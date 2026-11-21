@@ -16,12 +16,36 @@ built-in Liquid Retina XDR, ProMotion 120 Hz) with `scripts/perf.sh` unless note
 
 ## Baselines (Phase 0)
 
-Filled in by `scripts/perf.sh baseline-reference` and `scripts/perf.sh baseline-minimeters`.
+Measured with `scripts/perf.sh reference` and `scripts/perf.sh minimeters`: 5 s warm-up, then
+%CPU and memory once a second for 60 s (`top -l 61 -s 1`, first sample dropped) and a
+`footprint` at the end. Input: the `nmr_make_test_wav mix` signal (partials, correlated noise,
+kick, anti-phase every 8 s). Raw JSON lands in `perf-results/` (gitignored). GPU time is not
+measured yet (needs Instruments, or `powermetrics` with sudo).
 
-| App | Window | Input | CPU % (mean / p95) | Footprint | Notes |
-|---|---|---|---|---|---|
-| Reference `Stereometer.app` | medium | test WAV via `STEREOMETER_DEBUG_FILE` | _pending_ | _pending_ | |
-| MiniMeters (Stereometer only) | medium | system audio | _pending_ | _pending_ | owner sets the layout at Checkpoint A |
+| App | Window | Mode | Input | CPU % mean / median / p95 | Footprint (peak) | Date |
+|---|---|---|---|---|---|---|
+| Reference `Stereometer.app` 1.0 | 360 × 360 pt (medium) | Lissajous, colormap | debug file | **9.8** / 9.7 / 11.2 | **91.1 MiB** (91.4) | 2026-11-21 |
+| Reference `Stereometer.app` 1.0 | 949 × 949 pt (owner's size) | Lissajous, colormap | debug file | 9.6 / 9.7 / 11.9 | 160.1 MiB (176.5) | 2026-11-21 |
+| MiniMeters 1.0.29, Stereometer only | owner sets it, about 360 pt | owner's | system audio | _pending_ | _pending_ | Checkpoint A |
+
+The **medium (360 pt) rows are the gate** for the app budget; our app is compared in its
+Lissajous-equivalent mode at the same window size.
+
+How the reference is measured without touching it: its app re-saves its settings on every
+launch, so `perf.sh` measures an identical copy (`ditto`, a new bundle identifier, ad-hoc
+re-signed) whose settings domain gets the owner's saved reference settings with only the window
+frame changed. The original bundle and its settings are only read, and the copy, its domain and
+the WAV are deleted after the run. The reference draws with an `MTKView` at 120 fps while audio
+is non-silent (30 fps when silent) and, with `STEREOMETER_DEBUG_FILE`, runs no process tap.
+
+MiniMeters procedure (Checkpoint A):
+
+1. The owner gives MiniMeters a layout with only its Stereometer module and sizes the window to
+   about 360 × 360 pt; it must stay visible and uncovered during the run.
+2. `scripts/perf.sh minimeters` plays the mix through the default output with `afplay` for
+   about 75 s (MiniMeters meters system audio) and reports the window size it measured.
+3. If that size is not 360 pt, `scripts/perf.sh reference --width <size>` re-measures the
+   reference at the same size, so both baselines match.
 
 ## Results
 

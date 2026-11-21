@@ -19,7 +19,7 @@ scripts/gen-config.sh [--check]  # regenerate Sources/Core/include/nmr/product_c
 scripts/fetch-deps.sh            # pinned CLAP / clap-wrapper / VST3 SDK / AudioUnitSDK into external/
 scripts/check-sources.sh         # CMake and SwiftPM compile the same Sources/{Core,Render,CoreC}
 scripts/capture-probe.sh [s]     # end-to-end system-audio capture check with the built app (0 = audio arrived)
-scripts/perf.sh                  # CPU / memory / frame-pacing measurements (docs/BUDGET.md)
+scripts/perf.sh reference|minimeters  # baselines: CPU % + footprint at a window size (docs/BUDGET.md)
 ```
 
 Toolchain: Xcode 27.2 at `/Volumes/X9 Pro/Applications/Xcode.app` (selected), CMake 4.4 + Ninja.

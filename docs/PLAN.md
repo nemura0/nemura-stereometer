@@ -17,8 +17,8 @@ Legend: `[x]` done and verified, `[~]` in progress / partially verified, `[ ]` n
 - [x] Self-signed identity created; app and plugins signed with it
 - [x] Audio-capture permission survives a rebuild (owner approves the prompt once)
 - [x] CI secret export documented (`gh secret set`)
-- [ ] Baseline: reference app measured
-- [ ] Baseline: MiniMeters measurement prepared
+- [x] Baseline: reference app measured
+- [x] Baseline: MiniMeters measurement prepared
 - [ ] **CHECKPOINT A** (owner: Ableton AU/VST3, FL VST3/AU/CLAP; MiniMeters Stereometer-only layout)
 
 ## Phase 1: core
