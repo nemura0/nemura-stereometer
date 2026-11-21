@@ -1,0 +1,27 @@
+# Build outputs
+/build/
+/.build/
+/dist/
+/external/
+*.xcodeproj/
+*.xcworkspace/
+.swiftpm/
+compile_commands.json
+.cache/
+
+# macOS
+.DS_Store
+*.dSYM/
+
+# Secrets: signing material never enters the repo
+*.p12
+*.cer
+*.pem
+*.key
+*.keychain
+*.keychain-db
+signing.env
+
+# Perf/snapshot scratch
+/perf-results/
+/snapshots/out/
