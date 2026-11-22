@@ -72,7 +72,13 @@ TEST_CASE("factory presets: Mix, Stage, the original mode and Classic, as the br
   CHECK(stage.number(Id::kGlow) > 0);
   CHECK(stage.number(Id::kTrailMs) == response[0].value);  // Instant
 
-  CHECK(factoryPreset(NMR_VENDOR).settings.choiceKey(Id::kMode) == "original");
+  const st::Settings& nemura = factoryPreset(NMR_VENDOR).settings;  // Iris Bloom (DECISIONS)
+  CHECK(nemura.choiceKey(Id::kMode) == "original");
+  CHECK(nemura.choiceKey(Id::kColorMode) == "solid");
+  CHECK(nemura.color(Id::kSolidColor) == 0x8993FFFF);
+  CHECK(nemura.choiceKey(Id::kGuides) == "off");  // the mode draws its 0 dBFS ring
+  CHECK(nemura.number(Id::kGlow) == 70);
+  CHECK(nemura.number(Id::kTrailMs) == response[1].value);  // Fast
   CHECK(factoryPreset("Classic").settings.choiceKey(Id::kMode) == "goniometer");
 }
 

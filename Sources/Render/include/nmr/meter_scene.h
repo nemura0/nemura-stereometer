@@ -31,6 +31,7 @@
 #include <atomic>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <vector>
 
 namespace nmr {
@@ -46,6 +47,10 @@ struct MeterSettings {
   DrawStyle draw = DrawStyle::kDots;
   PointShape shape = PointShape::kSoft;
   GuideLevel guides = GuideLevel::kSubtle;
+  bool ring = false;  // the 0 dBFS ring (look.ring), at any guide level
+  // The glow color mixes from look.glow_color toward this as the correlation goes negative
+  // (phaseWarning); none keeps it.
+  std::optional<std::array<float, 3>> glow_warning;
   bool correlation = true;
   bool balance = true;
   bool readouts = false;

@@ -7,6 +7,7 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <vector>
 
@@ -81,6 +82,33 @@ class Stage {
     const auto py = static_cast<size_t>(y + (0.5f - half * p.y) * h);
     const auto* bytes = static_cast<const uint8_t*>(readback_.contents) + (py * kSize + px) * 4;
     return std::max({bytes[0], bytes[1], bytes[2]}) / 255.0f;
+  }
+  // Its red and blue (BGRA bytes).
+  [[nodiscard]] std::array<float, 2> redBlue(ScopePoint p) const {
+    const nmr::Layout layout = nmr::layout({.width = kSize, .height = kSize, .scale = 1});
+    const nmr::Rect& s = layout.scope;
+    const float x = std::round(s.x);
+    const float y = std::round(s.y);
+    const float w = std::round(s.x + s.width) - x;
+    const float h = std::round(s.y + s.height) - y;
+    const float half = nmr::MeterRenderer::kFullScale / 2;
+    const auto px = static_cast<size_t>(x + (0.5f + half * p.x) * w);
+    const auto py = static_cast<size_t>(y + (0.5f - half * p.y) * h);
+    const auto* bytes = static_cast<const uint8_t*>(readback_.contents) + (py * kSize + px) * 4;
+    return {bytes[2] / 255.0f, bytes[0] / 255.0f};
+  }
+
+  // The brightest channel within a pixel of where a scope point lands (for thin lines).
+  [[nodiscard]] float near(ScopePoint p) const {
+    const nmr::Layout layout = nmr::layout({.width = kSize, .height = kSize, .scale = 1});
+    const float pixel = 2.0f / (nmr::MeterRenderer::kFullScale * layout.scope.width);
+    float peak = 0;
+    for (int dx = -1; dx <= 1; ++dx) {
+      for (int dy = -1; dy <= 1; ++dy) {
+        peak = std::max(peak, at({p.x + dx * pixel, p.y + dy * pixel}));
+      }
+    }
+    return peak;
   }
 
  private:
@@ -297,4 +325,54 @@ TEST_CASE("meter scene: in Auto, late frames step the rate down to 60 Hz") {
   }
   CHECK(rate == 60);
   CHECK(s.scene().rate() == 60);
+}
+
+TEST_CASE("meter scene: the glow warning tints the glow as the correlation goes negative") {
+  Stage s;
+  REQUIRE_GPU(s);
+  const LocalFrameRing ring(1 << 15);
+  s.scene().setSource(ring.view(), kRate);
+  double time = 1;
+  const auto play = [&](float left, float right) {
+    for (int i = 0; i < 40; ++i, time += 1.0 / 60) {
+      writeDc(ring.view(), left, right, 800);
+      s.frame(time);
+    }
+  };
+  MeterSettings settings;
+  settings.look.solid = true;
+  settings.look.solid_color = {1, 1, 1};
+  settings.look.glow_color = {0, 0, 1};  // blue while in phase
+  settings.glow_warning = std::array<float, 3>{1, 0, 0};  // red in antiphase
+  settings.brightness = 3;
+  settings.glow = 1;
+  settings.analyzer.integration_s = 0.05;  // the correlation settles well within a play()
+  settings.look.whiten = nmr::kDefaultWhiten;
+  s.scene().setSettings(settings);
+  play(0.5f, 0.2f);  // in phase: lands at (−0.15, 0.35)
+  const auto in_phase = s.redBlue({-0.09f, 0.35f});
+  INFO(in_phase[0] << " " << in_phase[1]);
+  CHECK(in_phase[1] > 0.02f);
+  CHECK(in_phase[0] < 0.5f * in_phase[1]);  // hot light whitens a little
+  play(0.5f, -0.2f);  // antiphase: lands at (−0.35, 0.15)
+  const auto antiphase = s.redBlue({-0.29f, 0.15f});
+  INFO(antiphase[0] << " " << antiphase[1]);
+  CHECK(antiphase[0] > 0.02f);
+  CHECK(antiphase[1] < 0.5f * antiphase[0]);
+}
+
+TEST_CASE("meter scene: the ring setting draws the 0 dBFS ring") {
+  Stage s;
+  REQUIRE_GPU(s);
+  MeterSettings settings;
+  settings.guides = nmr::GuideLevel::kOff;
+  settings.look.ring = {1, 1, 1, 1};
+  s.scene().setSettings(settings);
+  s.frame(1);
+  const ScopePoint on_ring{0, 1};  // the unit circle's top, in M/S
+  CHECK(s.near(on_ring) < 0.05f);
+  settings.ring = true;
+  s.scene().setSettings(settings);
+  s.frame(1 + 1.0 / 60);
+  CHECK(s.near(on_ring) > 0.3f);
 }

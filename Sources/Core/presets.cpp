@@ -42,12 +42,16 @@ Settings stage() {
   return s;
 }
 
-// The original mode (its look is finished in Phase 2).
+// The original mode, Iris Bloom: solid iris dots in a strong glow, no guides but the mode's
+// 0 dBFS ring, a Fast response.
 Settings original() {
   Settings s;
   s.setChoice(Id::kMode, "original");
-  s.setNumber(Id::kGlow, 40);
-  s.setNumber(Id::kTrailMs, response("Slow"));
+  s.setChoice(Id::kColorMode, "solid");
+  s.setNumber(Id::kSolidColor, 0x8993FFFF);
+  s.setChoice(Id::kGuides, "off");
+  s.setNumber(Id::kGlow, 70);
+  s.setNumber(Id::kTrailMs, response("Fast"));
   return s;
 }
 

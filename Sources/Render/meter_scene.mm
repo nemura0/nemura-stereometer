@@ -3,6 +3,7 @@
 #import <QuartzCore/QuartzCore.h>
 
 #include <nmr/layout.h>
+#include <nmr/meter_bars.h>
 #include <nmr/scope_style.h>
 
 #include <algorithm>
@@ -135,7 +136,7 @@ void MeterScene::applySettings() noexcept {
   analyzer_.configure(settings_.analyzer);
   renderer_.setColormap(settings_.colormap);
   idle_.setTrail(settings_.trail_s);
-  guides_ = guides(settings_.guides, settings_.analyzer.map);
+  guides_ = guides(settings_.guides, settings_.analyzer.map, settings_.ring);
 }
 
 // History values every kHistoryStepS of display time (a frame can push several).
@@ -249,6 +250,14 @@ bool MeterScene::render(id<MTLCommandBuffer> commands, id<MTLTexture> target,
   frame.correlation_history = {history_.data() + history_head_ + kHistory - history_count_,
                                history_count_};
   frame.look = settings_.look;
+  if (settings_.glow_warning) {
+    const float w = phaseWarning(frame.correlation);
+    const std::array<float, 3>& from = settings_.look.glow_color;
+    const std::array<float, 3>& to = *settings_.glow_warning;
+    for (size_t c = 0; c < from.size(); ++c) {
+      frame.look.glow_color[c] = from[c] + (to[c] - from[c]) * w;
+    }
+  }
 
   if (!renderer_.encode(commands, target, frame, scale)) return false;
   clear_next_ = false;

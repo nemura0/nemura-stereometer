@@ -54,6 +54,8 @@ Legend: `[x]` done and verified, `[~]` in progress / partially verified, `[ ]` n
 
 ## Phase 3: app
 
+- [x] Settings → scene (`meterSettings`), with the NEMURA look (Iris Bloom) in the original mode
+      and the NEMURA factory preset
 - [ ] Overlay window: transparent, click-through, all Spaces, hover controls, size presets
 - [ ] Process tap: output-device changes (default output, device death, sample rate, tap format;
       rebuild off the main thread), only the tap's streams on for the IO proc (an output device
