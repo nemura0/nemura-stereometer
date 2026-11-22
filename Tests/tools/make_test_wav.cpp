@@ -5,9 +5,9 @@
 //
 // tone: one sine on both channels (default 1 kHz at -60 dBFS: far below listening level, but
 //       never digital silence, so a capture test can tell it from a denied permission).
-// mix:  a music-like stereo signal that exercises a goniometer: drifting partials with slow
-//       panning, partly correlated noise, a centered kick every 0.5 s, and one second of
-//       anti-phase every 8 s. Peaks near -2.5 dBFS; correlation about +0.8, -0.9 when inverted.
+// mix:  the test mix (nmr/test_mix.h).
+#include <nmr/test_mix.h>
+
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -76,15 +76,6 @@ bool writeWav(const std::string& path, double rate, const std::vector<float>& in
   return std::fclose(file) == 0 && ok;
 }
 
-// Deterministic white noise in [-1, 1).
-float noise(uint64_t n) {
-  uint64_t x = (n + 1) * 0x9E3779B97F4A7C15ull;
-  x ^= x >> 31;
-  x *= 0xBF58476D1CE4E5B9ull;
-  x ^= x >> 27;
-  return static_cast<float>(static_cast<double>(x >> 40) / static_cast<double>(1ull << 23) - 1.0);
-}
-
 std::vector<float> makeTone(const Options& o, uint64_t frames) {
   const double amplitude = std::pow(10.0, o.dbfs / 20.0);
   std::vector<float> out(frames * 2);
@@ -97,43 +88,8 @@ std::vector<float> makeTone(const Options& o, uint64_t frames) {
 }
 
 std::vector<float> makeMix(const Options& o, uint64_t frames) {
-  struct Partial {
-    double freq, amp, pan_rate, pan_phase;
-  };
-  const Partial partials[] = {
-      {110.0, 0.20, 0.07, 0.0}, {220.5, 0.14, 0.11, 1.3}, {330.7, 0.10, 0.05, 2.1},
-      {659.3, 0.07, 0.17, 0.4}, {1318.5, 0.04, 0.23, 3.0},
-  };
   std::vector<float> out(frames * 2);
-  double lp_left = 0;
-  double lp_right = 0;
-  const double lp = 1.0 - std::exp(-2 * kPi * 2500.0 / o.rate);  // one-pole low-pass
-  for (uint64_t i = 0; i < frames; ++i) {
-    const double t = static_cast<double>(i) / o.rate;
-    double left = 0;
-    double right = 0;
-    for (const Partial& p : partials) {
-      const double s = p.amp * std::sin(2 * kPi * p.freq * t);
-      const double pan = 0.5 + 0.45 * std::sin(2 * kPi * p.pan_rate * t + p.pan_phase);
-      left += s * std::sqrt(1.0 - pan);
-      right += s * std::sqrt(pan);
-    }
-    // Noise with correlation about 0.6 between channels.
-    const double shared = noise(i * 2);
-    lp_left += lp * ((0.8 * shared + 0.6 * noise(i * 2 + 1)) - lp_left);
-    lp_right += lp * ((0.8 * shared + 0.6 * noise(i * 2 + 7919)) - lp_right);
-    left += 0.12 * lp_left;
-    right += 0.12 * lp_right;
-    // Kick: 55 Hz sine with a fast decay, every 0.5 s, centered.
-    const double beat = std::fmod(t, 0.5);
-    const double kick = 0.45 * std::exp(-beat * 18.0) * std::sin(2 * kPi * 55.0 * beat);
-    left += kick;
-    right += kick;
-    // One second of anti-phase every 8 s (correlation goes negative).
-    if (std::fmod(t, 8.0) >= 7.0) right = -right;
-    out[2 * i] = static_cast<float>(left);
-    out[2 * i + 1] = static_cast<float>(right);
-  }
+  nmr::TestMix(o.rate).fill(out.data(), static_cast<uint32_t>(frames));
   return out;
 }
 

@@ -1,6 +1,6 @@
 # Developer tools for tests, baselines and snapshots (not shipped).
 add_executable(nmr_make_test_wav make_test_wav.cpp)
-target_link_libraries(nmr_make_test_wav PRIVATE nmr_warnings)
+target_link_libraries(nmr_make_test_wav PRIVATE nmr_core nmr_warnings)
 
 # Renders a WAV through the meter renderer to a PNG (scripts/snapshots.sh).
 if(TARGET nmr_render_test)

@@ -269,6 +269,23 @@ bool nmr_render_view_apply(void* view, const nmr_settings* settings, const uint8
 bool nmr_render_view_is_rendering(void* view);
 bool nmr_render_view_is_idle(void* view);
 
+// ---- Thumbnails -------------------------------------------------------------------------------
+// Meter looks drawn offscreen from a built-in test signal by the meter's own renderer
+// (Sources/Render/include/nmr/thumbnail.h), for the mode picker.
+
+typedef struct nmr_thumbnailer nmr_thumbnailer;
+
+// NULL without a Metal device or memory. Free with nmr_thumbnailer_destroy.
+nmr_thumbnailer* nmr_thumbnailer_create(void);
+void nmr_thumbnailer_destroy(nmr_thumbnailer* thumbnailer);  // NULL is ignored
+// Draws `settings` as the app's meter would (the colormap as for nmr_render_view_apply) into
+// `bgra`: width × height pixels (at most 1024 each), premultiplied BGRA, top row first, `scale`
+// pixels per point. Waits for the GPU: call it off the main thread, one thread at a time per
+// thumbnailer. False, writing nothing, for a NULL argument, a size it cannot draw, or a failure.
+bool nmr_thumbnailer_render(nmr_thumbnailer* thumbnailer, const nmr_settings* settings,
+                            const uint8_t* rgba, uint32_t width, uint32_t height, float scale,
+                            uint8_t* bgra);
+
 // ---- System capture ---------------------------------------------------------------------------
 // Follows the system output into a meter view (Sources/Render/include/nmr/system_capture.h): the
 // tap is rebuilt when the output device or its format changes, and each outcome is reported.
