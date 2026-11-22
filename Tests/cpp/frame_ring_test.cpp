@@ -133,12 +133,16 @@ TEST_CASE("a concurrent writer and reader never expose a torn frame") {
   constexpr uint64_t kTotalFrames = uint64_t{1} << 22;
   constexpr uint32_t kWindow = 4096;
   std::atomic<bool> done{false};
+  std::atomic<bool> reader_checked{false};
 
+  // On a slow machine the reader may not get a turn before kTotalFrames are written: the writer
+  // goes on (up to 64 times as long) until the reader has checked some frames.
   std::thread writer([&] {
     std::vector<float> block;
     uint64_t written = 0;
     uint32_t seed = 1;
-    while (written < kTotalFrames) {
+    while (written < kTotalFrames ||
+           (!reader_checked.load(std::memory_order_acquire) && written < kTotalFrames * 64)) {
       seed = seed * 1103515245u + 12345u;
       const uint32_t n = (seed >> 8) % 6000 + 1;  // 1..6000 frames: some cross a chunk
       fillFrames(block, written, n);
@@ -166,6 +170,7 @@ TEST_CASE("a concurrent writer and reader never expose a torn frame") {
       all_intact = all_intact && framesMatch(out.data() + (intact - first) * 2, intact,
                                              window_end - intact);
       frames_checked += window_end - intact;
+      reader_checked.store(true, std::memory_order_release);
     }
   }
   writer.join();
