@@ -99,6 +99,13 @@ final class OverlayController: NSObject, NSMenuDelegate {
     meter.stopCapture()
   }
 
+  /// Settings changed elsewhere (the popover, the Settings window): applied, not reported back.
+  func update(_ settings: SettingValues) {
+    guard settings != self.settings else { return }
+    self.settings = settings
+    apply()
+  }
+
   func toggle(_ key: SettingKey) {
     let change = settings.set(key, to: settings.flag(key) ? 0 : 1)
     guard change != .rejected else {

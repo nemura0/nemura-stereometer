@@ -11,6 +11,7 @@ import os
 final class AppDelegate: NSObject, NSApplicationDelegate {
   private var overlay: OverlayController?
   private let memory = CaptureMemory()
+  private let store: SettingsStore
   private let permission = PermissionWindow()
   private let probe: MeterProbe?
   private var probeTimerArmed = false
@@ -20,17 +21,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   init(probe: MeterProbe? = nil) {
     self.probe = probe
+    // The probe starts from the first-run settings and keeps nothing.
+    store = SettingsStore(defaults: probe == nil ? .standard : nil)
     super.init()
   }
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     NSApp.mainMenu = makeMainMenu()
-    guard let overlay = OverlayController(settings: Self.firstSettings) else {
+    guard let overlay = OverlayController(settings: store.values) else {
       Self.log.error("the meter view could not be made (no Metal device)")
       if let probe { finish(probe) }
       return
     }
     self.overlay = overlay
+    overlay.onSettingsChange = { [weak self] settings in self?.store.replace(settings) }
+    store.observe { [weak overlay] settings in overlay?.update(settings) }
     overlay.onShowPermission = { [weak self] in self?.permission.show(.help) }
     overlay.start()
     if let probe {
@@ -63,17 +68,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
     overlay?.reveal()
     return false
-  }
-
-  /// The NEMURA preset (the original mode) over the defaults. Click-through always starts off:
-  /// a window that ignores the mouse is never the first thing the user sees.
-  private static var firstSettings: SettingValues {
-    var settings = SettingValues()
-    if let nemura = Presets.factory.first(where: { $0.settings.choice(.mode) == "original" }) {
-      settings = settings.applying(nemura.settings)
-    }
-    _ = settings.set(.clickThrough, to: 0)
-    return settings
   }
 
   private func makeMainMenu() -> NSMenu {
