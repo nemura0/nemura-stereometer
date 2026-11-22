@@ -11,6 +11,7 @@ add_executable(nmr_tests
   guides_test.cpp
   idle_test.cpp
   layout_test.cpp
+  meter_bars_test.cpp
   playhead_test.cpp
   presets_test.cpp
   product_config_test.cpp
