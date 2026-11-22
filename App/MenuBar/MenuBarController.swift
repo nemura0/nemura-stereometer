@@ -14,6 +14,13 @@ final class MenuBarController: NSObject {
 
   private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
   private let thumbnails = ModeThumbnails()
+  private var content: NSHostingController<MeterMenuView>?
+
+  /// The popover content's size at its width.
+  var contentSize: NSSize {
+    content?.sizeThatFits(
+      in: NSSize(width: MeterMenuView.width, height: .greatestFiniteMagnitude)) ?? .zero
+  }
 
   init(model: MeterMenuModel) {
     self.model = model
@@ -31,6 +38,12 @@ final class MenuBarController: NSObject {
 
   var isIconShown: Bool { statusItem.isVisible && statusItem.button?.image != nil }
 
+  /// Where the icon is, in screen coordinates (nil before the menu bar places it).
+  var iconFrame: NSRect? {
+    guard let button = statusItem.button, let window = button.window else { return nil }
+    return window.convertToScreen(button.convert(button.bounds, to: nil))
+  }
+
   /// Opens the popover under the icon, or closes it.
   func toggle() {
     if popover.isShown {
@@ -38,9 +51,17 @@ final class MenuBarController: NSObject {
       return
     }
     guard let button = statusItem.button else { return }
-    model.reloadPresets()
     NSApp.activate()  // the popover takes the keyboard (its slider and toggles)
-    popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+    show(from: button)
+  }
+
+  /// Opens the popover under `anchor` (the icon). Its size is measured first and fixed: a
+  /// popover that learns its size after opening is placed as if it were empty, and under a
+  /// menu-bar icon that put its top above the screen.
+  func show(from anchor: NSView) {
+    model.reloadPresets()
+    popover.contentSize = contentSize
+    popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
   }
 
   @objc private func toggle(_ sender: Any?) { toggle() }
@@ -56,7 +77,10 @@ final class MenuBarController: NSObject {
         }
       },
       quit: { NSApp.terminate(nil) })
-    popover.contentViewController = NSHostingController(rootView: view)
+    let content = NSHostingController(rootView: view)
+    content.sizingOptions = []  // sized by show(from:), before it opens
+    popover.contentViewController = content
+    self.content = content
   }
 }
 

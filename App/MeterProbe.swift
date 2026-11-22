@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import NMRCoreC
 
 /// `--meter-probe`: runs the meter window fed by the system output (or, with `--instance`, by a
@@ -109,6 +109,10 @@ struct MeterProbe: Sendable {
   /// not shown: showing it would take the keyboard from the user's app).
   struct MenuBarReport: Encodable {
     let icon: Bool
+    /// The icon's frame on screen (x, y, width, height), and whether a screen shows it: the
+    /// menu bar hides icons that do not fit (beside the notch, say).
+    let iconFrame: [Double]
+    let iconOnScreen: Bool
     let width: Double
     let height: Double
     let preset: String
@@ -118,7 +122,10 @@ struct MeterProbe: Sendable {
     @MainActor
     init(_ menuBar: MenuBarController, overlay: OverlayController) {
       icon = menuBar.isIconShown
-      let size = menuBar.popover.contentViewController?.view.fittingSize ?? .zero
+      let frame = menuBar.iconFrame ?? .zero
+      iconFrame = [frame.minX, frame.minY, frame.width, frame.height].map(Double.init)
+      iconOnScreen = NSScreen.screens.contains { $0.frame.contains(frame) } && frame.width > 0
+      let size = menuBar.contentSize
       width = size.width
       height = size.height
       let model = menuBar.model

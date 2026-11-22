@@ -87,6 +87,35 @@ struct MeterMenuTests {
     #expect(size.height < 620)
   }
 
+  @Test("The popover opens under an icon in the menu bar, whole on screen, and stays there")
+  func opensBelowMenuBarIcon() async throws {
+    let screen = try #require(NSScreen.main)
+    // Where the menu bar puts its icons: above the visible frame, below the screen's top.
+    let menuBarHeight = screen.frame.maxY - screen.visibleFrame.maxY
+    let anchorWindow = NSWindow(
+      contentRect: NSRect(
+        x: screen.frame.midX + 100, y: screen.frame.maxY - (menuBarHeight + 22) / 2, width: 22,
+        height: 22),
+      styleMask: .borderless, backing: .buffered, defer: false)
+    anchorWindow.level = .statusBar
+    anchorWindow.isReleasedWhenClosed = false
+    anchorWindow.orderFrontRegardless()
+    defer { anchorWindow.close() }
+    let anchor = try #require(anchorWindow.contentView)
+    let menuBar = MenuBarController(model: model())
+    menuBar.show(from: anchor)
+    defer { menuBar.popover.performClose(nil) }
+    for _ in 0..<10 {  // thumbnails arrive and layout settles over a few run-loop turns
+      try await Task.sleep(for: .milliseconds(50))
+      let window = try #require(menuBar.popover.contentViewController?.view.window)
+      #expect(screen.frame.contains(window.frame), "\(window.frame) on \(screen.frame)")
+      #expect(window.frame.maxY <= anchorWindow.frame.maxY + 1)
+      #expect(window.frame.height >= menuBar.contentSize.height)  // its whole content
+    }
+    #expect(menuBar.contentSize.width == MeterMenuView.width)
+    #expect(menuBar.contentSize.height > 300)
+  }
+
   @Test("The menu-bar icon is a template the menu bar can tint")
   func icon() {
     #expect(MenuBarIcon.image.isTemplate)

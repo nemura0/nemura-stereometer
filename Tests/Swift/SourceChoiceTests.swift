@@ -41,6 +41,15 @@ struct SourceChoiceTests {
     #expect(FileState.Problem.tooLong.description.contains("too long"))
   }
 
+  @Test("A --feed file that cannot play stops the launch with a message saying why")
+  func feedFailureAtLaunch() {
+    let url = URL(filePath: "/Users/me/tu-archivo.wav")
+    #expect(
+      AppDelegate.feedFailure(url, .failed(.unreadable))
+        == "--feed /Users/me/tu-archivo.wav: The file could not be read")
+    #expect(AppDelegate.feedFailure(url, .playing(sampleRate: 48000)) == nil)
+  }
+
   @Test("System Output waits for the first-run window before the capture starts")
   func systemOutputWaitsForPermissionWindow() throws {
     let overlay = try #require(OverlayController(settings: SettingValues()))

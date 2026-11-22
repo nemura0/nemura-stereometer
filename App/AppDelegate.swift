@@ -80,10 +80,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     overlay.onCaptureWanted = { [weak self] in self?.allowCapture() }
     if let feed {
       sources.choose(.file(feed))  // no capture yet, so no permission window either
+      // A file that cannot play would leave a meter fed by nothing: say why and stop.
+      if let failure = Self.feedFailure(feed, menuBar.model.fileState) {
+        FileHandle.standardError.write(Data((failure + "\n").utf8))
+        exit(66)  // EX_NOINPUT
+      }
       if memory.introShown { allowCapture() }  // System Output starts it when chosen
       return
     }
     allowCapture()
+  }
+
+  /// What to print when the `--feed` file does not play, or nil when it does.
+  static func feedFailure(_ feed: URL, _ state: FileState) -> String? {
+    guard case .failed(let problem) = state else { return nil }
+    return "--feed \(feed.path): \(problem.description)"
   }
 
   /// Lets the capture start, after the first-run window explains the permission if it has not
