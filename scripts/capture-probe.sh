@@ -77,17 +77,34 @@ if [[ "$MODE" == meter ]]; then
       exit 2
       ;;
   esac
-  overlay_ok='.overlay.visible and .overlay.resizes and .overlay.click_through_toggles'
+  overlay_ok='.overlay.visible and .overlay.resizes and .overlay.click_through_toggles
+    and .overlay.notice_fits'
   if [[ "$(jq -r "$overlay_ok" "$OUT/meter-probe.json")" != "true" ]]; then
     echo "RESULT: the overlay window did not behave (see .overlay above)"
     exit 1
   fi
-  if [[ "$(jq -r '.rendering and (.idle | not)' "$OUT/meter-probe.json")" == "true" ]]; then
-    echo "RESULT: the meter draws the captured audio, and the overlay window behaves"
-    exit 0
+  if [[ "$(jq -r '.rendering and (.idle | not)' "$OUT/meter-probe.json")" != "true" ]]; then
+    echo "RESULT: the meter is idle (silent capture, or the audio does not reach the view)"
+    exit 1
   fi
-  echo "RESULT: the meter is idle (silent capture, or the audio does not reach the view)"
-  exit 1
+  # The probe always watches the signal: the sound playing must be seen, with no notice shown.
+  case "$(jq -r .signal "$OUT/meter-probe.json")" in
+    sound) ;;
+    silence_while_playing)
+      echo "RESULT: only zeros arrive while audio plays (the permission looks denied)"
+      exit 1
+      ;;
+    *)
+      echo "RESULT: the meter draws, but the signal watch saw no sound"
+      exit 1
+      ;;
+  esac
+  if [[ "$(jq -r '.notice == null' "$OUT/meter-probe.json")" != "true" ]]; then
+    echo "RESULT: the meter shows a notice while it draws sound (see .notice above)"
+    exit 1
+  fi
+  echo "RESULT: the meter draws the captured audio, sees the sound, and the overlay behaves"
+  exit 0
 fi
 open -W -n "$APP" --args --tap-probe "$CAPTURE_SECONDS" --out "$OUT/tap-probe.json"
 

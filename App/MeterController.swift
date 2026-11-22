@@ -10,13 +10,32 @@ struct CaptureState: Equatable, Sendable {
     case failed(step: String, status: Int32)
   }
 
+  /// What the samples suggest about the audio-capture permission (nmr/signal_watch.h).
+  enum Signal: Equatable, Sendable {
+    case unknown
+    /// Sound arrived: the permission is granted.
+    case sound
+    /// Only exact zeros while another app plays: the permission is likely off.
+    case silenceWhilePlaying
+
+    init(_ raw: UInt8) {
+      switch UInt32(raw) {
+      case NMR_SIGNAL_SOUND.rawValue: self = .sound
+      case NMR_SIGNAL_SILENCE_WHILE_PLAYING.rawValue: self = .silenceWhilePlaying
+      default: self = .unknown
+      }
+    }
+  }
+
   var phase: Phase = .starting
+  var signal: Signal = .unknown
   var rebuilds: UInt64 = 0
 
   init() {}
 
   init(_ status: nmr_capture_status) {
     rebuilds = status.rebuilds
+    signal = Signal(status.signal)
     if status.status == 0 {
       phase = .capturing(sampleRate: status.sample_rate, channels: Int(status.channels))
     } else {
@@ -37,7 +56,7 @@ final class MeterController {
   private(set) var capture = CaptureState() {
     didSet { onCaptureChange?(capture) }
   }
-  /// Main thread, after every start or rebuild of the capture.
+  /// Main thread, after every start or rebuild of the capture, and when its signal changes.
   var onCaptureChange: ((CaptureState) -> Void)?
 
   private var handle: OpaquePointer?
@@ -69,8 +88,9 @@ final class MeterController {
   }
 
   /// Starts following the system output (the first start may show the permission prompt).
-  /// Calling it again while capturing changes nothing.
-  func startCapture() {
+  /// Calling it again while capturing changes nothing. `soundSeenBefore`: an earlier run got
+  /// sound, so the permission is known to be granted and the signal is not watched.
+  func startCapture(soundSeenBefore: Bool) {
     if handle == nil {
       // The callback's reference, released by stopCapture() once no callback can come.
       let reference = Unmanaged.passRetained(self)
@@ -80,8 +100,9 @@ final class MeterController {
         let state = CaptureState(status.pointee)
         // The capture calls back on the main queue.
         MainActor.assumeIsolated { controller.reported(state) }
-      }, reference.toOpaque())
+      }, reference.toOpaque(), soundSeenBefore)
       if handle == nil { reference.release() } else { callbackReference = reference }
+      if handle != nil { capture = CaptureState() }  // starting: an old failure no longer shows
     }
     guard let handle else {
       Self.log.error("the system capture could not be set up")

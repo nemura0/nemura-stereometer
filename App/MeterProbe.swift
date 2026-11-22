@@ -34,6 +34,10 @@ struct MeterProbe: Sendable {
     let sampleRate: Double
     let channels: Int
     let rebuilds: UInt64
+    /// "unknown", "sound" or "silence_while_playing" (CaptureState.Signal).
+    let signal: String
+    /// The message the meter shows about the capture, if any.
+    let notice: String?
     let rendering: Bool
     let idle: Bool
     let overlay: OverlayReport?
@@ -55,6 +59,9 @@ struct MeterProbe: Sendable {
     let hotKeys: [String]
     let resizes: Bool
     let clickThroughToggles: Bool
+    /// A notice, shown at the smallest and the largest preset, lies inside the meter and leaves
+    /// the window's size alone.
+    let noticeFits: Bool
 
     @MainActor
     init(_ overlay: OverlayController) {
@@ -82,10 +89,34 @@ struct MeterProbe: Sendable {
       resizes = MeterSize(matching: resized.size) == .large
         && abs(resized.midX - frame.midX) < 1 && abs(resized.midY - frame.midY) < 1
 
+      noticeFits = Self.noticeFits(overlay)
+
       overlay.toggle(.clickThrough)
       let on = window.ignoresMouseEvents && !overlay.showsHoverControls
       overlay.toggle(.clickThrough)
       clickThroughToggles = on && !window.ignoresMouseEvents && overlay.showsHoverControls
+    }
+
+    @MainActor
+    private static func noticeFits(_ overlay: OverlayController) -> Bool {
+      let window = overlay.window
+      let frame = window.frame
+      let shown = overlay.notice
+      var fits = true
+      window.withoutSavingFrame {
+        for size in [MeterSize.small, .extraLarge] {
+          window.resize(to: size)
+          let notice = overlay.noticeFrame(showing: .failed(step: "AudioDeviceStart", status: -50))
+          let bounds = window.contentView?.bounds ?? .zero
+          let inset = NoticeView.inset - 0.5
+          fits = fits && MeterSize(matching: window.frame.size) == size && notice.height > 0
+            && notice.minX >= inset && notice.maxX <= bounds.width - inset
+            && notice.minY >= inset && notice.width <= NoticeView.maximumWidth + 0.5
+        }
+        _ = overlay.noticeFrame(showing: shown)
+        window.setFrame(frame, display: true)
+      }
+      return fits
     }
   }
 
@@ -96,7 +127,8 @@ struct MeterProbe: Sendable {
     guard let overlay else {
       return Report(
         phase: .failed, capturing: false, failedStep: "meter view", status: -1, sampleRate: 0,
-        channels: 0, rebuilds: 0, rendering: false, idle: false, overlay: nil, version: version)
+        channels: 0, rebuilds: 0, signal: "unknown", notice: nil, rendering: false, idle: false,
+        overlay: nil, version: version)
     }
     let meter = overlay.meter
     var (step, status, rate, channels) = ("", Int32(0), 0.0, 0)
@@ -110,8 +142,17 @@ struct MeterProbe: Sendable {
     return Report(
       phase: phase, capturing: phase == .capturing, failedStep: step, status: status,
       sampleRate: rate, channels: channels, rebuilds: meter.capture.rebuilds,
+      signal: Self.name(meter.capture.signal), notice: overlay.notice?.message,
       rendering: nmr_render_view_is_rendering(view), idle: nmr_render_view_is_idle(view),
       overlay: OverlayReport(overlay), version: version)
+  }
+
+  static func name(_ signal: CaptureState.Signal) -> String {
+    switch signal {
+    case .unknown: "unknown"
+    case .sound: "sound"
+    case .silenceWhilePlaying: "silence_while_playing"
+    }
   }
 
   /// Writes `report` and returns the app's exit code: 0 drawing sound, 1 capturing but silent or

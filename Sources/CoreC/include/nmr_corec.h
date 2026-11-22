@@ -272,8 +272,16 @@ bool nmr_render_view_is_idle(void* view);
 // ---- System capture ---------------------------------------------------------------------------
 // Follows the system output into a meter view (Sources/Render/include/nmr/system_capture.h): the
 // tap is rebuilt when the output device or its format changes, and each outcome is reported.
+// Until sound arrives it also reports what the signal suggests (Sources/Core/include/nmr/
+// signal_watch.h): only exact zeros while another app plays means the permission is likely off.
 
 typedef struct nmr_capture nmr_capture;
+
+typedef enum nmr_signal {
+  NMR_SIGNAL_UNKNOWN = 0,                // no sound yet, and no reason to suspect the permission
+  NMR_SIGNAL_SOUND = 1,                  // sound arrived: the permission is granted
+  NMR_SIGNAL_SILENCE_WHILE_PLAYING = 2,  // only zeros while another app plays: likely denied
+} nmr_signal;
 
 typedef struct nmr_capture_status {
   int32_t status;           // 0 while capturing; otherwise the OSStatus of failed_step
@@ -281,14 +289,17 @@ typedef struct nmr_capture_status {
   double sample_rate;
   uint32_t channels;
   uint64_t rebuilds;  // starts so far, this one included
+  uint8_t signal;     // an nmr_signal
 } nmr_capture_status;
 
-// Called on the main thread after every start or rebuild.
+// Called on the main thread after every start or rebuild, and when the signal changes.
 typedef void (*nmr_capture_status_fn)(void* context, const nmr_capture_status* status);
 
 // Main thread. `view` comes from nmr_render_view_create and must outlive the capture. NULL for
-// a NULL view or when memory runs out.
-nmr_capture* nmr_capture_create(void* view, nmr_capture_status_fn callback, void* context);
+// a NULL view or when memory runs out. `sound_seen_before`: an earlier run got sound (the
+// permission is granted), so the signal is reported as sound and not watched.
+nmr_capture* nmr_capture_create(void* view, nmr_capture_status_fn callback, void* context,
+                                bool sound_seen_before);
 // Main thread. Start returns at once (the tap starts on the capture queue and may show the
 // audio-capture prompt); stop waits until the tap is down. Destroy stops first.
 void nmr_capture_start(nmr_capture* capture);

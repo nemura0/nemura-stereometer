@@ -64,8 +64,13 @@ Legend: `[x]` done and verified, `[~]` in progress / partially verified, `[ ]` n
       output, device death, sample rate, tap format; rebuilt off the main thread, a failed start
       retried), only the tap's stream on for the IO proc (an output device with inputs, e.g.
       VB-Cable, does not count as microphone use), `scripts/capture-probe.sh --meter`
-- [ ] Permission flow and silent-buffer detection; capture failures shown in the UI (today they
-      are logged: `MeterController.onCaptureChange` has no UI yet)
+- [x] Permission flow and silent-buffer detection: a first-run window explains the permission
+      before the first capture; exact zeros while another process plays (and no sound ever seen)
+      show a notice on the meter that opens the help (System Settings › Screen & System Audio
+      Recording); capture failures show a notice with Try Again. Checked in-process by
+      `scripts/capture-probe.sh --meter` (signal seen, no notice while sound plays, the notice
+      fits at 240 and 720 pt); the denied path itself is covered by unit tests only (the owner's
+      grant is never changed)
 - [ ] UI: source picker, menu-bar popover, Settings window, preset import/export, frame-rate
       setting, `--feed`; the gear opens Settings once it exists (today: the quick menu)
 

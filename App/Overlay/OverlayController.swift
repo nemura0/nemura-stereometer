@@ -2,8 +2,9 @@ import AppKit
 import NMRCoreC
 import os
 
-/// The overlay: the meter window, its hover controls and quick menu, and the global hotkeys.
-/// Window settings apply at once; the quick menu (right-click, or the gear) changes them.
+/// The overlay: the meter window, its hover controls, capture notice and quick menu, and the
+/// global hotkeys. Window settings apply at once; the quick menu (right-click, or the gear)
+/// changes them.
 ///
 /// The window never activates the app (see OverlayWindow). It can always be brought back:
 /// ⌃⌥⌘H, or opening the app again (Finder, Spotlight), which also turns click-through off.
@@ -14,8 +15,16 @@ final class OverlayController: NSObject, NSMenuDelegate {
   private(set) var settings: SettingValues
   /// After every settings change made here (the quick menu, the hotkeys).
   var onSettingsChange: ((SettingValues) -> Void)?
+  /// After every capture report (MeterController.onCaptureChange).
+  var onCaptureChange: ((CaptureState) -> Void)?
+  /// The user asked how to turn the audio-capture permission on.
+  var onShowPermission: (() -> Void)?
 
   private let controls = HoverControls()
+  private let noticeView = NoticeView()
+  /// What the notice over the meter says now, if anything.
+  var notice: CaptureNotice? { noticeView.notice }
+  private var soundSeenBefore = false
   private let hotKeys = HotKeys()
   /// Right-click and the gear; its items are rebuilt each time it opens.
   let quickMenu = NSMenu()
@@ -39,7 +48,7 @@ final class OverlayController: NSObject, NSMenuDelegate {
     window = OverlayWindow(size: size)
     super.init()
 
-    let content = OverlayContentView(meter: meter.view, controls: controls)
+    let content = OverlayContentView(meter: meter.view, controls: controls, notice: noticeView)
     content.onHover = { [weak self] inside in self?.hovered(inside) }
     window.contentView = content
     self.content = content
@@ -47,19 +56,34 @@ final class OverlayController: NSObject, NSMenuDelegate {
     content.menu = quickMenu
     meter.view.menu = quickMenu
     controls.onControl = { [weak self] control, button in self?.handle(control, from: button) }
+    noticeView.onAction = { [weak self] in self?.noticeAction() }
+    meter.onCaptureChange = { [weak self] state in self?.captureChanged(state) }
     apply()
   }
 
-  /// Shows the window and starts the capture and the hotkeys.
+  /// Shows the window and starts the hotkeys; the capture starts with startCapture(), after the
+  /// first-run window if there is one.
   func start() {
     present()
-    meter.startCapture()
     let clickThrough = hotKeys.register(.toggleClickThrough) { [weak self] in
       self?.toggle(.clickThrough)
     }
     let shown = hotKeys.register(.toggleShown) { [weak self] in self?.toggleShown() }
     // The quick menu says which shortcut is missing and offers click-through only with its key.
     if !clickThrough || !shown { Self.log.error("a global hotkey is taken by another app") }
+  }
+
+  /// Starts following the system output (MeterController.startCapture).
+  func startCapture(soundSeenBefore: Bool) {
+    self.soundSeenBefore = soundSeenBefore
+    meter.startCapture(soundSeenBefore: soundSeenBefore)
+  }
+
+  /// A failed capture, tried again from the start (its notice goes until the new start reports).
+  func restartCapture() {
+    let soundSeen = soundSeenBefore || meter.capture.signal == .sound
+    meter.stopCapture()
+    meter.startCapture(soundSeenBefore: soundSeen)
   }
 
   /// Opening the app again: shows the window and turns click-through off, so a window the user
@@ -117,6 +141,7 @@ final class OverlayController: NSObject, NSMenuDelegate {
     let style = OverlayStyle(settings)
     window.apply(style)
     controls.isEnabled = style.showsHoverControls
+    noticeView.allowsAction = !style.ignoresMouseEvents
     hovered(pointerInside)  // no mouseEntered comes for a pointer already inside
     if NSApp.activationPolicy() != style.activationPolicy {
       if !NSApp.setActivationPolicy(style.activationPolicy) {
@@ -124,6 +149,27 @@ final class OverlayController: NSObject, NSMenuDelegate {
       } else if style.activationPolicy == .regular {
         NSApp.activate()  // the user asked for the Dock icon: show the app's menu bar with it
       }
+    }
+  }
+
+  /// For the probe: shows `notice` as a capture report would, and returns its frame in the
+  /// window's content view after layout (`.zero` when hidden).
+  func noticeFrame(showing notice: CaptureNotice?) -> NSRect {
+    noticeView.show(notice)
+    window.contentView?.layoutSubtreeIfNeeded()
+    return notice == nil ? .zero : noticeView.frame
+  }
+
+  private func captureChanged(_ state: CaptureState) {
+    noticeView.show(CaptureNotice(state))
+    onCaptureChange?(state)
+  }
+
+  private func noticeAction() {
+    switch noticeView.notice {
+    case .failed: restartCapture()
+    case .silenceWhilePlaying: onShowPermission?()
+    case nil: break
     }
   }
 
@@ -183,6 +229,18 @@ final class OverlayController: NSObject, NSMenuDelegate {
     }
     menu.addItem(.separator())
 
+    if case .failed = noticeView.notice {
+      let restart = NSMenuItem(
+        title: "Restart Capture", action: #selector(restartFromMenu(_:)), keyEquivalent: "")
+      restart.target = self
+      menu.addItem(restart)
+    }
+    let permission = NSMenuItem(
+      title: "Audio Permission…", action: #selector(showPermission(_:)), keyEquivalent: "")
+    permission.target = self
+    menu.addItem(permission)
+    menu.addItem(.separator())
+
     let hide = NSMenuItem(
       title: "Hide", action: #selector(hideWindow(_:)),
       keyEquivalent: HotKeys.Action.toggleShown.keyEquivalent)
@@ -210,19 +268,28 @@ final class OverlayController: NSObject, NSMenuDelegate {
   @objc private func hideWindow(_ item: NSMenuItem) {
     hide()
   }
+
+  @objc private func restartFromMenu(_ item: NSMenuItem) {
+    restartCapture()
+  }
+
+  @objc private func showPermission(_ item: NSMenuItem) {
+    onShowPermission?()
+  }
 }
 
-/// The meter with the hover controls over its top-left corner; reports the pointer entering
-/// and leaving the window.
+/// The meter with the hover controls over its top-left corner and the capture notice over its
+/// bottom; reports the pointer entering and leaving the window.
 @MainActor
 private final class OverlayContentView: NSView {
   var onHover: ((Bool) -> Void)?
+  private weak var notice: NoticeView?
   /// A faint edge while the pointer is over the window, so its size and edges can be seen.
   var showsOutline = false {
     didSet { layer?.borderWidth = showsOutline ? 1 : 0 }
   }
 
-  init(meter: NSView, controls: HoverControls) {
+  init(meter: NSView, controls: HoverControls, notice: NoticeView) {
     super.init(frame: meter.frame)
     autoresizesSubviews = true
     wantsLayer = true
@@ -235,6 +302,8 @@ private final class OverlayContentView: NSView {
       x: HoverControls.inset, y: bounds.height - HoverControls.inset - controls.frame.height)
     controls.autoresizingMask = [.maxXMargin, .minYMargin]
     addSubview(controls)
+    self.notice = notice
+    notice.place(in: self)
     addTrackingArea(
       NSTrackingArea(
         rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
@@ -243,6 +312,11 @@ private final class OverlayContentView: NSView {
 
   @available(*, unavailable)
   required init?(coder: NSCoder) { fatalError("not used") }
+
+  override func resizeSubviews(withOldSize oldSize: NSSize) {
+    super.resizeSubviews(withOldSize: oldSize)
+    notice?.placeInSuperview()
+  }
 
   override func mouseEntered(with event: NSEvent) { onHover?(true) }
   override func mouseExited(with event: NSEvent) { onHover?(false) }

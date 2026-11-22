@@ -5,6 +5,7 @@
 #import <Foundation/Foundation.h>
 #include <nmr/product_config.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstring>
 #include <vector>
@@ -72,6 +73,73 @@ OSStatus turnOffInputStreams(AudioObjectID device, AudioDeviceIOProcID proc,
   for (uint32_t i = 0; i < count; ++i) usage->mStreamIsOn[i] = 0;
   const auto used = static_cast<UInt32>(kHeader + sizeof(UInt32) * usage->mNumberStreams);
   return AudioObjectSetPropertyData(device, &address, 0, nullptr, used, usage);
+}
+
+namespace {
+
+// Process facts from the HAL, for anyProcessPlays.
+struct HalProcessFacts {
+  bool runsOutput(AudioObjectID process) const noexcept {
+    UInt32 running = 0;
+    return readProperty(process, kAudioProcessPropertyIsRunningOutput, running) == noErr &&
+           running != 0;
+  }
+  bool pid(AudioObjectID process, pid_t& out) const noexcept {
+    return readProperty(process, kAudioProcessPropertyPID, out) == noErr;
+  }
+  bool playsOn(AudioObjectID process, AudioObjectID device) const noexcept {
+    if (device == kAudioObjectUnknown) return false;
+    const AudioObjectPropertyAddress address{kAudioProcessPropertyDevices,
+                                             kAudioObjectPropertyScopeOutput,
+                                             kAudioObjectPropertyElementMain};
+    UInt32 size = 0;
+    if (AudioObjectGetPropertyDataSize(process, &address, 0, nullptr, &size) != noErr) {
+      return false;
+    }
+    std::vector<AudioObjectID> devices;
+    try {
+      devices.resize(size / sizeof(AudioObjectID));
+    } catch (...) {
+      return false;
+    }
+    if (devices.empty() ||
+        AudioObjectGetPropertyData(process, &address, 0, nullptr, &size, devices.data()) !=
+            noErr) {
+      return false;
+    }
+    const size_t listed = std::min<size_t>(devices.size(), size / sizeof(AudioObjectID));
+    for (size_t i = 0; i < listed; ++i) {
+      if (devices[i] == device) return true;
+    }
+    return false;
+  }
+};
+
+}  // namespace
+
+bool processesPlayOutput(pid_t except, AudioObjectID device) noexcept {
+  const AudioObjectPropertyAddress address{kAudioHardwarePropertyProcessObjectList,
+                                           kAudioObjectPropertyScopeGlobal,
+                                           kAudioObjectPropertyElementMain};
+  UInt32 size = 0;
+  if (AudioObjectGetPropertyDataSize(kAudioObjectSystemObject, &address, 0, nullptr, &size) !=
+      noErr) {
+    return false;
+  }
+  std::vector<AudioObjectID> processes;
+  try {
+    processes.resize(size / sizeof(AudioObjectID));
+  } catch (...) {
+    return false;
+  }
+  if (processes.empty() ||
+      AudioObjectGetPropertyData(kAudioObjectSystemObject, &address, 0, nullptr, &size,
+                                 processes.data()) != noErr) {
+    return false;
+  }
+  // The list may have shrunk meanwhile.
+  const size_t listed = std::min<size_t>(processes.size(), size / sizeof(AudioObjectID));
+  return anyProcessPlays(processes.data(), listed, except, device, HalProcessFacts{});
 }
 
 OSStatus SystemTap::fail(const char* step, OSStatus status) noexcept {

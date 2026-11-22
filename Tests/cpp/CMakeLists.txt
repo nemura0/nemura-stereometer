@@ -17,6 +17,7 @@ add_executable(nmr_tests
   product_config_test.cpp
   readouts_test.cpp
   scope_style_test.cpp
+  signal_watch_test.cpp
   settings_test.cpp
   shm_transport_test.cpp)
 # Core-internal headers (settings_migration.h) and nlohmann/json, which the migration tests use.

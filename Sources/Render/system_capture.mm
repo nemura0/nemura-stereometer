@@ -6,7 +6,11 @@
 #include <os/log.h>
 
 #include <atomic>
+#include <ctime>
 #include <utility>
+#include <vector>
+
+#include <unistd.h>
 
 #if !__has_feature(objc_arc)
 #error "Sources/Render is compiled with ARC (-fobjc-arc) in every build"
@@ -28,6 +32,8 @@ constexpr AudioObjectPropertyAddress kDeviceRate =
     globalAddress(kAudioDevicePropertyNominalSampleRate);
 constexpr AudioObjectPropertyAddress kTapFormat = globalAddress(kAudioTapPropertyFormat);
 
+double uptimeS() { return static_cast<double>(clock_gettime_nsec_np(CLOCK_UPTIME_RAW)) / 1e9; }
+
 os_log_t captureLog() {
   static os_log_t log = os_log_create(NMR_APP_BUNDLE_ID, "capture");
   return log;
@@ -47,8 +53,9 @@ void addListener(AudioObjectID object, const AudioObjectPropertyAddress& address
 // Blocks capture a C++ reference as a reference, so every block below captures a weak_ptr copy
 // made from weak_from_this(), never a reference parameter that dies with the caller.
 //
-// stop() bumps `epoch` before it waits for the queue. Work on the queue reads the epoch when it
-// begins, so whatever it delivers after a stop() carries an old epoch and is dropped on main.
+// stop() bumps `epoch` before it waits for the queue, and again on the queue. Work on the queue
+// reads the epoch when it begins, so whatever it delivers after a stop() carries an old epoch and
+// is dropped on main (the second bump catches work that began between the two).
 struct SystemCapture::State : std::enable_shared_from_this<State> {
   static constexpr uint32_t kRetries = 3;  // failed starts retried, kRetryS apart
   static constexpr double kRetryS = 0.5;
@@ -68,6 +75,11 @@ struct SystemCapture::State : std::enable_shared_from_this<State> {
   AudioObjectID watched_device = kAudioObjectUnknown;
   AudioObjectID watched_tap = kAudioObjectUnknown;
   AudioObjectPropertyListenerBlock on_change;
+  SignalWatch signal_watch;
+  dispatch_source_t checker = nil;  // looks at the signal until sound arrives
+  std::vector<float> scratch = std::vector<float>(size_t{kMaxWriteChunk} * 2);
+  uint64_t checked = 0;  // frames of `ring` already looked at
+  CaptureStatus last;    // the latest report, sent again when the signal changes
 
   // Main thread only: the ring the view reads, kept until it reads another.
   std::shared_ptr<LocalFrameRing> shown;
@@ -139,6 +151,9 @@ struct SystemCapture::State : std::enable_shared_from_this<State> {
       watch(next->outputDevice(), next->tapObject());
       tap = std::move(next);
       ring = fresh;
+      checked = 0;
+      signal_watch.restart();  // zeros counted so far came from the old tap
+      startChecking();
     } else {
       ring = nullptr;
       fresh = nullptr;  // no source: the view shows that nothing arrives
@@ -149,7 +164,48 @@ struct SystemCapture::State : std::enable_shared_from_this<State> {
     deliver(at, fresh, report);
   }
 
+  void startChecking() {
+    if (checker != nil || signal_watch.done()) return;
+    checker = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, queue);
+    const auto period = static_cast<int64_t>(SignalWatch::kCheckS * NSEC_PER_SEC);
+    dispatch_source_set_timer(checker, dispatch_time(DISPATCH_TIME_NOW, period),
+                              static_cast<uint64_t>(period), static_cast<uint64_t>(period / 5));
+    const std::weak_ptr<State> weak = weak_from_this();
+    dispatch_source_set_event_handler(checker, ^{
+      if (const std::shared_ptr<State> self = weak.lock()) self->checkSignal();
+    });
+    dispatch_resume(checker);
+  }
+
+  void stopChecking() {
+    if (checker == nil) return;
+    dispatch_source_cancel(checker);
+    checker = nil;
+  }
+
+  void checkSignal() {
+    if (!running || ring == nullptr || tap == nullptr) return;
+    const uint64_t at = epoch.load(std::memory_order_acquire);
+    const Signal before = signal_watch.signal();
+    const Samples samples = SignalWatch::scan(ring->view(), checked, scratch.data());
+    const bool others = samples == Samples::kZeros &&
+                        processesPlayOutput(getpid(), tap->outputDevice());
+    const Signal now = signal_watch.check(uptimeS(), samples, others);
+    if (signal_watch.done()) stopChecking();
+    if (now == before) return;
+    last.signal = now;
+    const CaptureStatus report = last;
+    const std::weak_ptr<State> weak = weak_from_this();
+    dispatch_async(dispatch_get_main_queue(), ^{
+      const std::shared_ptr<State> self = weak.lock();
+      if (!self || self->epoch.load(std::memory_order_acquire) != at) return;
+      if (self->handler != nil) self->handler(report);
+    });
+  }
+
   void deliver(uint64_t at, std::shared_ptr<LocalFrameRing> fresh, CaptureStatus report) {
+    report.signal = signal_watch.signal();
+    last = report;
     const std::weak_ptr<State> weak = weak_from_this();
     dispatch_async(dispatch_get_main_queue(), ^{
       const std::shared_ptr<State> self = weak.lock();
@@ -162,8 +218,10 @@ struct SystemCapture::State : std::enable_shared_from_this<State> {
   }
 };
 
-SystemCapture::SystemCapture(NMR_OBJC(RenderView) * view, StatusHandler handler)
+SystemCapture::SystemCapture(NMR_OBJC(RenderView) * view, StatusHandler handler,
+                             bool sound_seen_before)
     : state_(std::make_shared<State>()) {
+  state_->signal_watch = SignalWatch(sound_seen_before);
   dispatch_queue_attr_t attributes = dispatch_queue_attr_make_with_qos_class(
       DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INTERACTIVE, 0);
   state_->queue = dispatch_queue_create("nmr.capture", attributes);
@@ -195,11 +253,15 @@ void SystemCapture::stop() {
   state_->epoch.fetch_add(1, std::memory_order_acq_rel);  // drops deliveries still on their way
   State* state = state_.get();
   dispatch_sync(state->queue, ^{
+    // Again on the queue: work that began between the first bump and this block read the new
+    // epoch, so its deliveries would pass; this bump comes after all of it.
+    state->epoch.fetch_add(1, std::memory_order_acq_rel);
     if (!state->running) return;
     state->running = false;
     AudioObjectRemovePropertyListenerBlock(kAudioObjectSystemObject, &kDefaultOutput,
                                            state->queue, state->on_change);
     state->unwatch();
+    state->stopChecking();
     state->tap.reset();  // AudioDeviceStop, then the IO proc, the aggregate and the tap
     state->ring = nullptr;  // `shown` keeps it until the view lets go
   });

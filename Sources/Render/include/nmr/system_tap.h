@@ -15,7 +15,10 @@
 #include <nmr/frame_ring.h>
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
+
+#include <sys/types.h>
 
 namespace nmr {
 
@@ -30,6 +33,28 @@ struct TapFormat {
 // reading them would show the app as using the microphone. Non-real-time thread only.
 OSStatus turnOffInputStreams(AudioObjectID device, AudioDeviceIOProcID proc,
                              uint32_t count) noexcept;
+
+// Whether any process but `except` (a pid; -1 leaves none out) runs audio output on `device`
+// now, playing zeros included. A process that plays elsewhere does not count: the tap only hears
+// the device it follows. False when the HAL cannot be asked. Non-real-time thread only (it
+// allocates).
+bool processesPlayOutput(pid_t except, AudioObjectID device) noexcept;
+
+// The decision behind processesPlayOutput over `facts`, which answers runsOutput(process),
+// pid(process, pid&) and playsOn(process, device), each false when it cannot be read. Idle
+// processes cost one read: the pid and the devices are read only for those that run output.
+template <typename Facts>
+bool anyProcessPlays(const AudioObjectID* processes, size_t count, pid_t except,
+                     AudioObjectID device, const Facts& facts) noexcept {
+  for (size_t i = 0; i < count; ++i) {
+    const AudioObjectID process = processes[i];
+    if (!facts.runsOutput(process)) continue;
+    pid_t pid = -1;
+    if (except >= 0 && (!facts.pid(process, pid) || pid == except)) continue;
+    if (facts.playsOn(process, device)) return true;
+  }
+  return false;
+}
 
 class SystemTap {
  public:

@@ -3,9 +3,15 @@ import NMRCoreC
 import os
 
 /// Runs the overlay meter (App/Overlay) fed by the system output, or the `--meter-probe`.
+///
+/// The first run explains the audio-capture permission before the capture starts (and with it
+/// the macOS prompt). The probe never shows that window, writes nothing to the app's defaults,
+/// and always watches the signal, so it checks the watch itself.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
   private var overlay: OverlayController?
+  private let memory = CaptureMemory()
+  private let permission = PermissionWindow()
   private let probe: MeterProbe?
   private var probeTimerArmed = false
   private var probeDone = false
@@ -25,8 +31,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       return
     }
     self.overlay = overlay
-    if let probe { arm(probe, overlay.meter) }
+    overlay.onShowPermission = { [weak self] in self?.permission.show(.help) }
     overlay.start()
+    if let probe {
+      arm(probe, overlay)
+      overlay.startCapture(soundSeenBefore: false)
+      return
+    }
+    overlay.onCaptureChange = { [weak self] state in self?.memory.remember(state) }
+    if memory.introShown {
+      overlay.startCapture(soundSeenBefore: memory.soundSeen)
+    } else {
+      permission.show(.intro) { [weak self] in
+        guard let self else { return }
+        self.memory.introShown = true
+        self.overlay?.startCapture(soundSeenBefore: self.memory.soundSeen)
+      }
+    }
   }
 
   func applicationWillTerminate(_ notification: Notification) {
@@ -73,8 +94,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   /// The probe's seconds start at the capture's first report; without one in time (the
   /// permission prompt is still open, say) it reports what it has.
-  private func arm(_ probe: MeterProbe, _ meter: MeterController) {
-    meter.onCaptureChange = { [weak self] _ in
+  private func arm(_ probe: MeterProbe, _ overlay: OverlayController) {
+    overlay.onCaptureChange = { [weak self] _ in
       guard let self, !self.probeTimerArmed else { return }
       self.probeTimerArmed = true
       self.after(probe.seconds) { $0.finish(probe) }
