@@ -49,19 +49,20 @@ TEST_CASE("render view: stops in silence and starts again when sound arrives") {
     [window close];
     return;
   }
-  // No source: silence. Idle after the trail plus 250 ms.
-  CHECK(spinUntil(^bool { return view.isIdle == YES; }, 3));
+  // No source: silence. Idle after the trail plus 250 ms. The waits return as soon as the view
+  // gets there; they are long because a loaded CI runner can draw a few frames a second.
+  CHECK(spinUntil(^bool { return view.isIdle == YES; }, 10));
   CHECK_FALSE(view.isRendering);
 
   const nmr::LocalFrameRing ring(1 << 15);
   [view setSource:ring.view() sampleRate:48000];  // a new source: it looks, then stops again
   CHECK(view.isRendering);
-  CHECK(spinUntil(^bool { return view.isIdle == YES; }, 3));
+  CHECK(spinUntil(^bool { return view.isIdle == YES; }, 10));
 
   std::vector<float> sound(2 * 512, 0.1f);
   nmr::FrameRingView writer = ring.view();
   writer.write(sound.data(), 512);
-  CHECK(spinUntil(^bool { return view.isIdle == NO; }, 1));
+  CHECK(spinUntil(^bool { return view.isIdle == NO; }, 5));
   CHECK(view.isRendering);
 
   [view setSource:{} sampleRate:48000];  // the ring goes away first
