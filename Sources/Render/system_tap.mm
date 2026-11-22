@@ -5,7 +5,9 @@
 #import <Foundation/Foundation.h>
 #include <nmr/product_config.h>
 
+#include <cstddef>
 #include <cstring>
+#include <vector>
 
 #if !__has_feature(objc_arc)
 #error "Sources/Render is compiled with ARC (-fobjc-arc) in every build"
@@ -34,7 +36,43 @@ NSString* readStringProperty(AudioObjectID object, AudioObjectPropertySelector s
   return (__bridge_transfer NSString*)value;
 }
 
+uint32_t inputStreamCount(AudioObjectID device) {
+  const AudioObjectPropertyAddress address{kAudioDevicePropertyStreams,
+                                           kAudioObjectPropertyScopeInput,
+                                           kAudioObjectPropertyElementMain};
+  UInt32 size = 0;
+  if (AudioObjectGetPropertyDataSize(device, &address, 0, nullptr, &size) != noErr) return 0;
+  return size / sizeof(AudioStreamID);
+}
+
 }  // namespace
+
+OSStatus turnOffInputStreams(AudioObjectID device, AudioDeviceIOProcID proc,
+                             uint32_t count) noexcept {
+  if (proc == nullptr) return kAudioHardwareBadObjectError;
+  if (count == 0) return noErr;
+  const AudioObjectPropertyAddress address{kAudioDevicePropertyIOProcStreamUsage,
+                                           kAudioObjectPropertyScopeInput,
+                                           kAudioObjectPropertyElementMain};
+  UInt32 size = 0;
+  OSStatus status = AudioObjectGetPropertyDataSize(device, &address, 0, nullptr, &size);
+  if (status != noErr) return status;
+  constexpr size_t kHeader = offsetof(AudioHardwareIOProcStreamUsage, mStreamIsOn);
+  if (size < kHeader) return kAudioHardwareBadPropertySizeError;
+  // uint64_t storage: aligned for the struct's leading pointer.
+  std::vector<uint64_t> storage((size + sizeof(uint64_t) - 1) / sizeof(uint64_t), 0);
+  auto* usage = reinterpret_cast<AudioHardwareIOProcStreamUsage*>(storage.data());
+  usage->mIOProc = reinterpret_cast<void*>(proc);
+  status = AudioObjectGetPropertyData(device, &address, 0, nullptr, &size, usage);
+  if (status != noErr) return status;
+  const size_t fits = size < kHeader ? 0 : (size - kHeader) / sizeof(UInt32);
+  if (usage->mNumberStreams < count || fits < usage->mNumberStreams) {
+    return kAudioHardwareBadStreamError;
+  }
+  for (uint32_t i = 0; i < count; ++i) usage->mStreamIsOn[i] = 0;
+  const auto used = static_cast<UInt32>(kHeader + sizeof(UInt32) * usage->mNumberStreams);
+  return AudioObjectSetPropertyData(device, &address, 0, nullptr, used, usage);
+}
 
 OSStatus SystemTap::fail(const char* step, OSStatus status) noexcept {
   failed_step_ = step;
@@ -57,6 +95,7 @@ OSStatus SystemTap::start() noexcept {
     }
     NSString* output_uid = readStringProperty(output, kAudioDevicePropertyDeviceUID, status);
     if (output_uid == nil) return fail("output device UID", status);
+    output_ = output;
 
     // Global stereo tap of every process. Private: only this process sees it. Unmuted: the user
     // keeps hearing everything.
@@ -80,7 +119,8 @@ OSStatus SystemTap::start() noexcept {
                           (asbd.mFormatFlags & kAudioFormatFlagIsFloat) != 0 &&
                           asbd.mBitsPerChannel == 32;
     if (!is_float || asbd.mChannelsPerFrame < 1 || asbd.mChannelsPerFrame > 2) {
-      return fail("tap format (expected float32, 1-2 channels)", kAudioDeviceUnsupportedFormatError);
+      return fail("tap format (expected float32, 1-2 channels)",
+                  kAudioDeviceUnsupportedFormatError);
     }
     format_.sample_rate = asbd.mSampleRate;
     format_.channels = asbd.mChannelsPerFrame;
@@ -111,6 +151,10 @@ OSStatus SystemTap::start() noexcept {
     if (status != noErr || proc == nullptr) return fail("AudioDeviceCreateIOProcID", status);
     proc_ = proc;
 
+    // Only the tap's stream: the output device's own inputs (if any) stay off.
+    status = turnOffInputStreams(aggregate_, proc_, inputStreamCount(output));
+    if (status != noErr) return fail("IO proc stream usage", status);
+
     status = AudioDeviceStart(aggregate_, proc_);
     if (status != noErr) return fail("AudioDeviceStart", status);
   }
@@ -132,6 +176,7 @@ void SystemTap::stop() noexcept {
     AudioHardwareDestroyProcessTap(tap_);
     tap_ = kAudioObjectUnknown;
   }
+  output_ = kAudioObjectUnknown;
 }
 
 // HAL real-time IO thread. Copies only: no allocation, locks, ObjC or system calls.

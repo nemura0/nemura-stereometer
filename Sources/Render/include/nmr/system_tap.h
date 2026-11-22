@@ -25,6 +25,12 @@ struct TapFormat {
   bool interleaved = true;
 };
 
+// Turns off the first `count` input streams of `device` for `proc` (call before
+// AudioDeviceStart). The capture aggregate lists its clock device's own inputs before the tap;
+// reading them would show the app as using the microphone. Non-real-time thread only.
+OSStatus turnOffInputStreams(AudioObjectID device, AudioDeviceIOProcID proc,
+                             uint32_t count) noexcept;
+
 class SystemTap {
  public:
   explicit SystemTap(FrameRingView ring) noexcept : ring_(ring) {}
@@ -39,6 +45,9 @@ class SystemTap {
   void stop() noexcept;
 
   [[nodiscard]] bool isRunning() const noexcept { return proc_ != nullptr; }
+  // While running: the tap, and the output device that clocks it (for change listeners).
+  [[nodiscard]] AudioObjectID tapObject() const noexcept { return tap_; }
+  [[nodiscard]] AudioObjectID outputDevice() const noexcept { return output_; }
   [[nodiscard]] TapFormat format() const noexcept { return format_; }
   // The Core Audio call that failed in the last start(), or "" after a successful start.
   [[nodiscard]] const char* failedStep() const noexcept { return failed_step_; }
@@ -66,6 +75,7 @@ class SystemTap {
   FrameRingView ring_;
   AudioObjectID tap_ = kAudioObjectUnknown;
   AudioObjectID aggregate_ = kAudioObjectUnknown;
+  AudioObjectID output_ = kAudioObjectUnknown;
   AudioDeviceIOProcID proc_ = nullptr;
   TapFormat format_;
   // Layout of the tap's buffers at the end of the IO proc's input list. Written by start()

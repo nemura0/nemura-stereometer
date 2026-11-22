@@ -262,6 +262,38 @@ bool nmr_tap_probe_run(double seconds, nmr_tap_probe_result* result);
 // Creates the meter view (an NSView*, returned retained: +1) of the given size in points.
 // `rgba` is the premultiplied background color; alpha 0 is fully transparent. Main thread only.
 void* nmr_render_view_create(double width, double height, const float rgba[4]);
+// Applies `settings` to the meter view (main thread), with the colormap as a table of
+// NMR_COLORMAP_TABLE_SIZE RGBA entries (nmr_colormaps_table). False for a NULL argument.
+bool nmr_render_view_apply(void* view, const nmr_settings* settings, const uint8_t* rgba);
+// Whether the view's render thread runs, and whether it stopped for silence (main thread).
+bool nmr_render_view_is_rendering(void* view);
+bool nmr_render_view_is_idle(void* view);
+
+// ---- System capture ---------------------------------------------------------------------------
+// Follows the system output into a meter view (Sources/Render/include/nmr/system_capture.h): the
+// tap is rebuilt when the output device or its format changes, and each outcome is reported.
+
+typedef struct nmr_capture nmr_capture;
+
+typedef struct nmr_capture_status {
+  int32_t status;           // 0 while capturing; otherwise the OSStatus of failed_step
+  const char* failed_step;  // "" while capturing; valid during the callback only
+  double sample_rate;
+  uint32_t channels;
+  uint64_t rebuilds;  // starts so far, this one included
+} nmr_capture_status;
+
+// Called on the main thread after every start or rebuild.
+typedef void (*nmr_capture_status_fn)(void* context, const nmr_capture_status* status);
+
+// Main thread. `view` comes from nmr_render_view_create and must outlive the capture. NULL for
+// a NULL view or when memory runs out.
+nmr_capture* nmr_capture_create(void* view, nmr_capture_status_fn callback, void* context);
+// Main thread. Start returns at once (the tap starts on the capture queue and may show the
+// audio-capture prompt); stop waits until the tap is down. Destroy stops first.
+void nmr_capture_start(nmr_capture* capture);
+void nmr_capture_stop(nmr_capture* capture);
+void nmr_capture_destroy(nmr_capture* capture);
 
 #ifdef __cplusplus
 }  // extern "C"
