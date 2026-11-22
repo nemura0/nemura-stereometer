@@ -49,7 +49,8 @@ Legend: `[x]` done and verified, `[~]` in progress / partially verified, `[ ]` n
 - [x] `scripts/snapshots.sh` renders offscreen PNGs per mode from a test WAV
 - [x] NEMURA mode: 3 original concepts (Iris Bloom, Spine & Wings, Metalheart), a snapshot of
       each, normal and in antiphase (`scripts/snapshots.sh`)
-- [ ] **CHECKPOINT B** (snapshots, pacing stats, Instant calibrated against the reference)
+- [~] **CHECKPOINT B**: snapshots, pacing stats and the Instant calibration reported; the owner
+      picked Iris Bloom (2026-11-22); the side-by-side Instant check in Live is pending
 
 ## Phase 3: app
 
