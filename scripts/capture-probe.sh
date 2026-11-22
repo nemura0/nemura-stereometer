@@ -83,6 +83,12 @@ if [[ "$MODE" == meter ]]; then
     echo "RESULT: the overlay window did not behave (see .overlay above)"
     exit 1
   fi
+  menu_ok='.menu_bar.icon and .menu_bar.mode_reaches_meter and .menu_bar.width > 0
+    and .menu_bar.height > 0 and .menu_bar.preset == "NEMURA"'
+  if [[ "$(jq -r "$menu_ok" "$OUT/meter-probe.json")" != "true" ]]; then
+    echo "RESULT: the menu-bar icon or its popover did not behave (see .menu_bar above)"
+    exit 1
+  fi
   if [[ "$(jq -r '.rendering and (.idle | not)' "$OUT/meter-probe.json")" != "true" ]]; then
     echo "RESULT: the meter is idle (silent capture, or the audio does not reach the view)"
     exit 1
@@ -103,7 +109,8 @@ if [[ "$MODE" == meter ]]; then
     echo "RESULT: the meter shows a notice while it draws sound (see .notice above)"
     exit 1
   fi
-  echo "RESULT: the meter draws the captured audio, sees the sound, and the overlay behaves"
+  echo "RESULT: the meter draws the captured audio, sees the sound, and the overlay and the"
+  echo "        menu-bar popover behave"
   exit 0
 fi
 open -W -n "$APP" --args --tap-probe "$CAPTURE_SECONDS" --out "$OUT/tap-probe.json"

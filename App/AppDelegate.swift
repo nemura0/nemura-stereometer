@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private let memory = CaptureMemory()
   private let store: SettingsStore
   private let permission = PermissionWindow()
+  private var menuBar: MenuBarController?
   private let probe: MeterProbe?
   private var probeTimerArmed = false
   private var probeDone = false
@@ -38,12 +39,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     store.observe { [weak overlay] settings in overlay?.update(settings) }
     overlay.onShowPermission = { [weak self] in self?.permission.show(.help) }
     overlay.start()
+    let menuBar = MenuBarController(model: MeterMenuModel(store: store))
+    if !overlay.registeredHotKeys.contains(.toggleClickThrough) {
+      menuBar.model.clickThroughShortcut = nil
+    }
+    self.menuBar = menuBar
     if let probe {
       arm(probe, overlay)
       overlay.startCapture(soundSeenBefore: false)
       return
     }
-    overlay.onCaptureChange = { [weak self] state in self?.memory.remember(state) }
+    overlay.onCaptureChange = { [weak self] state in
+      self?.menuBar?.model.capture = state
+      self?.memory.remember(state)
+    }
     if memory.introShown {
       overlay.startCapture(soundSeenBefore: memory.soundSeen)
     } else {
@@ -89,7 +98,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   /// The probe's seconds start at the capture's first report; without one in time (the
   /// permission prompt is still open, say) it reports what it has.
   private func arm(_ probe: MeterProbe, _ overlay: OverlayController) {
-    overlay.onCaptureChange = { [weak self] _ in
+    overlay.onCaptureChange = { [weak self] state in
+      self?.menuBar?.model.capture = state
       guard let self, !self.probeTimerArmed else { return }
       self.probeTimerArmed = true
       self.after(probe.seconds) { $0.finish(probe) }
@@ -111,7 +121,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private func finish(_ probe: MeterProbe) {
     guard !probeDone else { return }
     probeDone = true
-    let report = MeterProbe.report(overlay)
+    let report = MeterProbe.report(overlay, menuBar: menuBar)
     let code = MeterProbe.write(report, to: probe.outputPath)
     // Still starting: the capture queue may be inside the permission prompt, and stopping would
     // wait for it. Exiting takes the private tap and aggregate down with the process.

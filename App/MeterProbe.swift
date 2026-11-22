@@ -41,7 +41,33 @@ struct MeterProbe: Sendable {
     let rendering: Bool
     let idle: Bool
     let overlay: OverlayReport?
+    let menuBar: MenuBarReport?
     let version: String
+  }
+
+  /// The menu-bar icon and its popover, checked inside the running app (the popover is laid out,
+  /// not shown: showing it would take the keyboard from the user's app).
+  struct MenuBarReport: Encodable {
+    let icon: Bool
+    let width: Double
+    let height: Double
+    let preset: String
+    /// A mode chosen in the popover reaches the meter (and is chosen back).
+    let modeReachesMeter: Bool
+
+    @MainActor
+    init(_ menuBar: MenuBarController, overlay: OverlayController) {
+      icon = menuBar.isIconShown
+      let size = menuBar.popover.contentViewController?.view.fittingSize ?? .zero
+      width = size.width
+      height = size.height
+      let model = menuBar.model
+      preset = model.presetTitle
+      let mode = model.mode
+      model.mode = mode == .lissajous ? .half : .lissajous
+      modeReachesMeter = overlay.meter.settings.choice(.mode) == model.mode.rawValue
+      model.mode = mode
+    }
   }
 
   /// The overlay window, checked inside the running app: its state, then a resize to a preset
@@ -122,13 +148,13 @@ struct MeterProbe: Sendable {
 
   /// The report for `overlay` now.
   @MainActor
-  static func report(_ overlay: OverlayController?) -> Report {
+  static func report(_ overlay: OverlayController?, menuBar: MenuBarController?) -> Report {
     let version = String(cString: nmr_version())
     guard let overlay else {
       return Report(
         phase: .failed, capturing: false, failedStep: "meter view", status: -1, sampleRate: 0,
         channels: 0, rebuilds: 0, signal: "unknown", notice: nil, rendering: false, idle: false,
-        overlay: nil, version: version)
+        overlay: nil, menuBar: nil, version: version)
     }
     let meter = overlay.meter
     var (step, status, rate, channels) = ("", Int32(0), 0.0, 0)
@@ -144,7 +170,8 @@ struct MeterProbe: Sendable {
       sampleRate: rate, channels: channels, rebuilds: meter.capture.rebuilds,
       signal: Self.name(meter.capture.signal), notice: overlay.notice?.message,
       rendering: nmr_render_view_is_rendering(view), idle: nmr_render_view_is_idle(view),
-      overlay: OverlayReport(overlay), version: version)
+      overlay: OverlayReport(overlay),
+      menuBar: menuBar.map { MenuBarReport($0, overlay: overlay) }, version: version)
   }
 
   static func name(_ signal: CaptureState.Signal) -> String {
