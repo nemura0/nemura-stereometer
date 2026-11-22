@@ -25,6 +25,8 @@ struct MeterPalette {
   Premultiplied center{0.25f, 0.25f, 0.28f, 0.35f};
   Premultiplied positive{0x89 / 255.0f, 0x93 / 255.0f, 1.0f, 1.0f};        // #8993FF
   Premultiplied negative{0xE0 / 255.0f, 0x3C / 255.0f, 0x60 / 255.0f, 1.0f};  // #E03C60
+  Premultiplied text{0.55f, 0.56f, 0.62f, 0.9f};  // the readouts (a negative correlation's in
+                                                   // the negative color)
 };
 
 struct BarRect {

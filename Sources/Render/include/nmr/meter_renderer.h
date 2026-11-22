@@ -20,6 +20,7 @@
 
 #include <nmr/colormap.h>
 #include <nmr/dsp.h>
+#include <nmr/glyph_atlas.h>
 #include <nmr/guides.h>
 #include <nmr/layout.h>
 #include <nmr/meter_bars.h>
@@ -76,6 +77,9 @@ class MeterRenderer {
   static constexpr uint32_t kGlowTexelPt = 4;  // the bloom's texel, in points (whole pixels)
   static constexpr uint32_t kMaxGlowDivisor = 16;  // its texel at most, in pixels
   static constexpr float kGlowGain = 2.5f;     // light added at glow 1 (of the blurred light)
+  static constexpr float kReadoutCap = 0.9f;   // readout digits' height, of the bar's
+  static constexpr float kMinReadoutCapPx = 3;  // smaller readouts are not drawn
+  static constexpr int kAtlasAttempts = 3;      // builds per frame to fit the widest readout
 
   MeterRenderer(id<MTLDevice> device, MTLPixelFormat target_format);
   MeterRenderer(const MeterRenderer&) = delete;
@@ -100,6 +104,12 @@ class MeterRenderer {
   void encodeScope(id<MTLCommandBuffer> commands, id<MTLBuffer> slot, const MeterFrame& frame);
   void encodeComposite(id<MTLCommandBuffer> commands, id<MTLTexture> target, id<MTLBuffer> slot,
                        const MeterFrame& frame, float scale, float glow);
+  void encodeReadouts(id<MTLRenderCommandEncoder> encoder, id<MTLBuffer> slot,
+                      const MeterFrame& frame);
+  [[nodiscard]] float readoutCap(const Rect& readout) const noexcept;
+  // The atlas for readouts in this place, rebuilt when their digit size changes; false if
+  // there is none.
+  bool ensureAtlas(const Rect& readout);
 
   id<MTLDevice> device_;
   MTLPixelFormat target_format_;
@@ -112,6 +122,7 @@ class MeterRenderer {
   id<MTLRenderPipelineState> rects_;
   id<MTLRenderPipelineState> glow_down_;
   id<MTLRenderPipelineState> glow_blur_;
+  id<MTLRenderPipelineState> glyphs_;
   // Bit i set: buffers_[i] is free. Shared with the completion handlers, which may run after
   // the renderer is gone.
   std::shared_ptr<std::atomic<uint32_t>> free_slots_;
@@ -123,6 +134,9 @@ class MeterRenderer {
   id<MTLTexture> glow_;
   id<MTLTexture> glow_spare_;
   uint32_t glow_divisor_ = 0;
+  GlyphAtlas atlas_;
+  float atlas_width_per_cap_ = 0;  // the widest readout's width per pixel of digit height
+  float failed_cap_ = 0;           // a digit size whose atlas could not be made
   Rect scope_rect_{};    // where it sits in the target, in whole pixels
   bool scope_clear_ = true;
   bool has_previous_ = false;

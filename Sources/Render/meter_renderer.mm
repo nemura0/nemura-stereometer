@@ -1,5 +1,6 @@
 #import <nmr/meter_renderer.h>
 
+#include <nmr/readouts.h>
 #include <nmr/shader_library.h>
 
 #include <os/log.h>
@@ -54,8 +55,19 @@ struct GpuRect {
 };
 static_assert(sizeof(GpuRect) == 32);
 
+struct GpuGlyph {
+  simd_float4 rect;   // in target pixels
+  simd_float4 color;  // premultiplied
+  simd_float2 atlas;  // the cell's top left in the atlas
+  simd_float2 pad;
+};
+static_assert(sizeof(GpuGlyph) == 48);
+
+constexpr uint32_t kMaxGlyphs = 2 * ReadoutText::kMaxChars;
+
 // One slot of per-frame data: the points (the previous frame's last first), the guides, the
-// meter rects. Buffer offsets are 256-byte aligned, as macOS asks of buffers on any GPU.
+// meter rects, the readouts' glyphs. Buffer offsets are 256-byte aligned, as macOS asks of
+// buffers on any GPU.
 constexpr size_t kOffsetAlignment = 256;
 constexpr size_t aligned(size_t bytes) {
   return (bytes + kOffsetAlignment - 1) / kOffsetAlignment * kOffsetAlignment;
@@ -64,7 +76,9 @@ constexpr size_t kPointsBytes = (MeterRenderer::kMaxPoints + 1) * sizeof(simd_fl
 constexpr size_t kSegmentsOffset = aligned(kPointsBytes);
 constexpr size_t kRectsOffset =
     aligned(kSegmentsOffset + Guides::kMaxSegments * sizeof(GpuSegment));
-constexpr size_t kSlotBytes = kRectsOffset + MeterBars::kMaxRects * sizeof(GpuRect);
+constexpr size_t kGlyphsOffset =
+    aligned(kRectsOffset + MeterBars::kMaxRects * sizeof(GpuRect));
+constexpr size_t kSlotBytes = kGlyphsOffset + kMaxGlyphs * sizeof(GpuGlyph);
 constexpr uint32_t kAllSlots = (1u << MeterRenderer::kFramesInFlight) - 1;
 
 constexpr MTLPixelFormat kLightFormat = MTLPixelFormatRGBA16Float;
@@ -130,6 +144,8 @@ MeterRenderer::MeterRenderer(id<MTLDevice> device, MTLPixelFormat target_format)
                      blended(target_format, kOne, kOne, MTLBlendOperationMax));
   rects_ = pipeline([@"rects/" stringByAppendingString:target], @"rect_vertex", @"rect_fragment",
                     blended(target_format, kOne, over));
+  glyphs_ = pipeline([@"glyphs/" stringByAppendingString:target], @"glyph_vertex",
+                     @"glyph_fragment", blended(target_format, kOne, over));
   glow_down_ = pipeline(@"glow_down", @"fullscreen_vertex", @"glow_down_fragment",
                         opaque(kLightFormat));
   glow_blur_ = pipeline(@"glow_blur", @"fullscreen_vertex", @"glow_blur_fragment",
@@ -140,7 +156,8 @@ MeterRenderer::MeterRenderer(id<MTLDevice> device, MTLPixelFormat target_format)
     buffers = buffers && buffer != nil;
   }
   ready_ = buffers && decay_ != nil && dots_ != nil && trace_ != nil && image_ != nil &&
-           guides_ != nil && rects_ != nil && glow_down_ != nil && glow_blur_ != nil;
+           guides_ != nil && rects_ != nil && glow_down_ != nil && glow_blur_ != nil &&
+           glyphs_ != nil;
   if (!ready_) os_log_error(OS_LOG_DEFAULT, "nmr: the meter renderer could not be set up");
   const colormap::Builtin* iris = colormap::findBuiltin(colormap::kDefaultKey);
   if (iris != nullptr) colormap_ = colormap::table(iris->stops);
@@ -373,7 +390,82 @@ void MeterRenderer::encodeComposite(id<MTLCommandBuffer> commands, id<MTLTexture
                 vertexCount:4
               instanceCount:bars.count];
   }
+  encodeReadouts(encoder, slot, frame);
   [encoder endEncoding];
+}
+
+// The digit height for a readout place: kReadoutCap of its height, in whole pixels, less where
+// the widest texts would not fit its width (as wide per pixel of digit as the last atlas).
+float MeterRenderer::readoutCap(const Rect& readout) const noexcept {
+  float cap = std::min(std::round(kReadoutCap * readout.height), GlyphAtlas::kMaxCapPx);
+  if (atlas_width_per_cap_ > 0) {
+    cap = std::min(cap, std::floor(readout.width / atlas_width_per_cap_));
+  }
+  return cap;
+}
+
+bool MeterRenderer::ensureAtlas(const Rect& readout) {
+  // Glyph widths do not scale exactly with the size, so a build that comes out too wide is
+  // tried again, a pixel smaller (rarely more than once).
+  float below = GlyphAtlas::kMaxCapPx + 1;  // each retry is at least a pixel smaller
+  for (int attempt = 0; attempt < kAtlasAttempts; ++attempt) {
+    const float cap = std::min(readoutCap(readout), below - 1);
+    below = cap;
+    if (!(cap >= kMinReadoutCapPx) || cap == failed_cap_) {
+      atlas_.clear();
+      return false;
+    }
+    if (!atlas_.ready() || atlas_.capPx() != cap) {
+      if (!atlas_.build(device_, cap)) {
+        failed_cap_ = cap;  // not tried again on every frame
+        return false;
+      }
+      failed_cap_ = 0;
+    }
+    const float widest = std::max(atlas_.width(balanceText(1).view()),
+                                  atlas_.width(correlationText(-1).view()));
+    atlas_width_per_cap_ = std::max(atlas_width_per_cap_, widest / cap);
+    if (widest <= readout.width) return true;
+  }
+  atlas_.clear();
+  return false;
+}
+
+// Each readout right-aligned in its place, its digits centered on the bar; pens on whole pixels.
+void MeterRenderer::encodeReadouts(id<MTLRenderCommandEncoder> encoder, id<MTLBuffer> slot,
+                                   const MeterFrame& frame) {
+  const Layout& l = frame.layout;
+  const Rect& sized = l.correlation_readout.empty() ? l.balance_readout : l.correlation_readout;
+  if (sized.empty() || !ensureAtlas(sized)) return;
+  auto* out = reinterpret_cast<GpuGlyph*>(static_cast<uint8_t*>(slot.contents) + kGlyphsOffset);
+  uint32_t count = 0;
+  const auto place = [&](const Rect& r, const ReadoutText& text, const Premultiplied& color) {
+    if (r.empty()) return;
+    float pen = std::round(r.x + r.width - atlas_.width(text.view()));
+    const float baseline = std::round(r.y + 0.5f * (r.height + atlas_.capPx()));
+    for (const char c : text.view()) {
+      const GlyphAtlas::Glyph* g = atlas_.glyph(c);
+      if (g == nullptr || count == kMaxGlyphs) continue;
+      out[count++] = {simd_make_float4(std::round(pen) - atlas_.penX(),
+                                       baseline - atlas_.baseline(), atlas_.cellWidth(),
+                                       atlas_.cellHeight()),
+                      simdOf(color), simd_make_float2(g->cell_x, 0), simd_make_float2(0, 0)};
+      pen += g->advance;
+    }
+  };
+  const MeterPalette& p = frame.look.meters;
+  const ReadoutText correlation = correlationText(frame.correlation);
+  const bool negative = correlation.length > 0 && correlation.chars[0] == '-';
+  place(l.correlation_readout, correlation, negative ? p.negative : p.text);
+  place(l.balance_readout, balanceText(frame.balance), p.text);
+  if (count == 0) return;
+  [encoder setRenderPipelineState:glyphs_];
+  [encoder setVertexBuffer:slot offset:kGlyphsOffset atIndex:0];
+  [encoder setFragmentTexture:atlas_.texture() atIndex:0];
+  [encoder drawPrimitives:MTLPrimitiveTypeTriangleStrip
+              vertexStart:0
+              vertexCount:4
+            instanceCount:count];
 }
 
 }  // namespace nmr

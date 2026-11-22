@@ -72,6 +72,19 @@ struct ImageVertex {
   float4 position [[position]];
 };
 
+struct GlyphQuad {
+  float4 rect;   // in target pixels
+  float4 color;  // premultiplied
+  float2 atlas;  // the cell's top left in the atlas
+  float2 pad;
+};
+
+struct GlyphVertex {
+  float4 position [[position]];
+  float2 atlas;
+  float4 color [[flat]];
+};
+
 // A point of the scope (±1 at full scale, Y up) in the pixels of a rect `size` wide (Y down).
 static float2 scopePixel(float2 p, float2 size, float full_scale) {
   return float2(0.5 + 0.5 * full_scale * p.x, 0.5 - 0.5 * full_scale * p.y) * size;
@@ -270,6 +283,24 @@ vertex RectVertex rect_vertex(uint vid [[vertex_id]], uint iid [[instance_id]],
   out.rect = r.rect;
   out.color = r.color;
   return out;
+}
+
+// Glyph cells sit on whole pixels, so each pixel reads one atlas texel.
+vertex GlyphVertex glyph_vertex(uint vid [[vertex_id]], uint iid [[instance_id]],
+                                device const GlyphQuad* quads [[buffer(0)]],
+                                constant CompositeUniforms& u [[buffer(1)]]) {
+  const GlyphQuad q = quads[iid];
+  const float2 corner = 0.5 * (quadCorner(vid) + 1.0);
+  GlyphVertex out;
+  out.position = pixelToClip(q.rect.xy + corner * q.rect.zw, u.target_size);
+  out.atlas = q.atlas + corner * q.rect.zw;
+  out.color = q.color;
+  return out;
+}
+
+fragment float4 glyph_fragment(GlyphVertex in [[stage_in]],
+                               texture2d<float, access::read> atlas [[texture(0)]]) {
+  return in.color * atlas.read(uint2(in.atlas)).r;
 }
 
 fragment float4 rect_fragment(RectVertex in [[stage_in]]) {

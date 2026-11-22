@@ -15,6 +15,7 @@ add_executable(nmr_tests
   playhead_test.cpp
   presets_test.cpp
   product_config_test.cpp
+  readouts_test.cpp
   scope_style_test.cpp
   settings_test.cpp
   shm_transport_test.cpp)

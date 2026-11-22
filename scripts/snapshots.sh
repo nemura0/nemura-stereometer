@@ -26,3 +26,5 @@ shot goniometer_lines --mode goniometer --draw lines ${extra[@]+"${extra[@]}"}
 shot antiphase --mode goniometer --at 8.5 ${extra[@]+"${extra[@]}"}
 shot transparent --mode goniometer --background 00000000 ${extra[@]+"${extra[@]}"}
 shot glow --mode goniometer --glow 60 ${extra[@]+"${extra[@]}"}
+shot readouts --mode goniometer --readouts on ${extra[@]+"${extra[@]}"}
+shot readouts_antiphase --mode goniometer --readouts on --at 8.5 ${extra[@]+"${extra[@]}"}

@@ -10,6 +10,7 @@
 #include <cmath>
 #include <limits>
 #include <memory>
+#include <utility>
 #include <vector>
 
 using nmr::DrawStyle;
@@ -565,4 +566,138 @@ TEST_CASE("meter renderer: glow spreads the same distance in points at any scale
     CHECK(one[i] < 0.01f);
     CHECK(two[i] > 0.015f);
   }
+}
+
+namespace {
+
+struct Lit {
+  int count = 0;
+  float red = 0;   // summed over the lit pixels
+  float blue = 0;
+  float min_x = 1e9f;
+  std::vector<bool> mask;
+};
+
+// The pixels in `area` brighter than the background (whole pixels whose centers lie inside).
+Lit litIn(const Harness& h, const nmr::Rect& area, float threshold = 0.2f) {
+  Lit lit;
+  for (int y = static_cast<int>(std::ceil(area.y - 0.5f));
+       y + 0.5f < area.y + area.height; ++y) {
+    for (int x = static_cast<int>(std::ceil(area.x - 0.5f));
+         x + 0.5f < area.x + area.width; ++x) {
+      const Rgb c = h.pixel(static_cast<float>(x), static_cast<float>(y));
+      const bool on = c.peak() > threshold;
+      lit.mask.push_back(on);
+      if (!on) continue;
+      ++lit.count;
+      lit.red += c.r;
+      lit.blue += c.b;
+      lit.min_x = std::min(lit.min_x, static_cast<float>(x));
+    }
+  }
+  return lit;
+}
+
+MeterFrame readoutFrame(Harness& h, float correlation, float balance) {
+  h.setLayout(nmr::layout({.width = kSize, .height = kSize, .scale = 1, .readouts = true}));
+  MeterFrame f = h.frame();
+  f.correlation = correlation;
+  f.balance = balance;
+  return f;
+}
+
+}  // namespace
+
+TEST_CASE("meter renderer: readouts show the meters' values at their right") {
+  Harness h;
+  REQUIRE_GPU(h);
+  REQUIRE(h.render(readoutFrame(h, 0.5f, 0.3322f)));  // "+0.50", "R 3.0 dB"
+  const Layout& l = h.layout();
+  REQUIRE_FALSE(l.correlation_readout.empty());
+  REQUIRE_FALSE(l.balance_readout.empty());
+  CHECK(litIn(h, l.correlation_readout).count > 6);
+  CHECK(litIn(h, l.balance_readout).count > 6);
+}
+
+TEST_CASE("meter renderer: the widest readout stays inside its place, at any scale") {
+  Harness h;
+  REQUIRE_GPU(h);
+  for (const float scale : {1.0f, 2.0f}) {
+    CAPTURE(scale);
+    h.setLayout(nmr::layout({.width = kSize, .height = kSize, .scale = scale, .readouts = true}));
+    MeterFrame f = h.frame();
+    f.correlation = -1;  // "-1.00"
+    f.balance = 1;       // "R 60.0 dB"
+    REQUIRE(h.render(f, scale));
+    const Layout& l = h.layout();
+    for (const auto& [bar, readout] : {std::pair{l.correlation, l.correlation_readout},
+                                       std::pair{l.balance, l.balance_readout}}) {
+      // Around the readout: the gap after the bar's (antialiased) end, the rest of the row to
+      // the view's edge, and a pixel above and below.
+      const float gap_x = bar.x + bar.width + 1.5f;
+      const float right = readout.x + readout.width;
+      CHECK(litIn(h, {gap_x, readout.y - 2, readout.x - gap_x, readout.height + 4}, 0.05f)
+                .count == 0);
+      CHECK(litIn(h, {right, readout.y - 2, kSize - right, readout.height + 4}, 0.05f).count ==
+            0);
+      CHECK(litIn(h, {readout.x, readout.y - 2, readout.width, 1.5f}, 0.05f).count == 0);
+      CHECK(litIn(h, {readout.x, readout.y + readout.height + 0.5f, readout.width, 1.5f}, 0.05f)
+                .count == 0);
+      CHECK(litIn(h, readout).count > 6);
+    }
+  }
+}
+
+TEST_CASE("meter renderer: readout digits keep their places as the value changes") {
+  Harness h;
+  REQUIRE_GPU(h);
+  REQUIRE(h.render(readoutFrame(h, 0.11f, 0)));
+  const Lit ones = litIn(h, h.layout().correlation_readout);
+  REQUIRE(h.render(readoutFrame(h, 0.88f, 0)));
+  const Lit eights = litIn(h, h.layout().correlation_readout);
+  REQUIRE(ones.count > 0);
+  CHECK(ones.min_x == eights.min_x);  // the sign sits at the same place: digits are one width
+}
+
+TEST_CASE("meter renderer: readouts too small to read are not drawn, not drawn stale") {
+  Harness h;
+  REQUIRE_GPU(h);
+  REQUIRE(h.render(readoutFrame(h, 0.5f, 0)));  // an atlas for the usual size
+  Layout tiny = h.layout();
+  tiny.correlation_readout.height = 2;  // digits under kMinReadoutCapPx
+  tiny.balance_readout.height = 2;
+  h.setLayout(tiny);
+  for (int i = 0; i < 2; ++i) {  // and on the frame after, when the size is the same
+    MeterFrame f = h.frame();
+    f.correlation = 0.5f;
+    REQUIRE(h.render(f));
+    const nmr::Rect& r = tiny.correlation_readout;
+    CHECK(litIn(h, {r.x, r.y - 6, r.width, r.height + 12}, 0.05f).count == 0);
+  }
+}
+
+TEST_CASE("meter renderer: readouts follow the value; a negative correlation is in its color") {
+  Harness h;
+  REQUIRE_GPU(h);
+  REQUIRE(h.render(readoutFrame(h, 0.5f, 0)));
+  const Lit positive = litIn(h, h.layout().correlation_readout);
+  REQUIRE(h.render(readoutFrame(h, -0.5f, 0)));
+  const Lit negative = litIn(h, h.layout().correlation_readout);
+  REQUIRE(positive.count > 0);
+  REQUIRE(negative.count > 0);
+  CHECK(positive.mask != negative.mask);
+  CHECK(positive.blue >= positive.red);  // the neutral text color
+  CHECK(negative.red > 1.5f * negative.blue);  // #E03C60
+  REQUIRE(h.render(readoutFrame(h, 0.25f, 0)));
+  CHECK(litIn(h, h.layout().correlation_readout).mask != positive.mask);
+}
+
+TEST_CASE("meter renderer: a centered balance reads C, at the readout's right") {
+  Harness h;
+  REQUIRE_GPU(h);
+  REQUIRE(h.render(readoutFrame(h, 0, 0)));
+  const nmr::Rect& r = h.layout().balance_readout;
+  const Lit lit = litIn(h, r);
+  CHECK(lit.count > 2);
+  CHECK(lit.min_x > r.x + 0.6f * r.width);
 }
