@@ -3,8 +3,8 @@ import NMRCoreC
 import os
 
 /// The overlay: the meter window, its hover controls, capture notice and quick menu, and the
-/// global hotkeys. Window settings apply at once; the quick menu (right-click, or the gear)
-/// changes them.
+/// global hotkeys. Window settings apply at once; the quick menu (right-click) changes them, and
+/// the gear opens Settings.
 ///
 /// The window never activates the app (see OverlayWindow). It can always be brought back:
 /// ⌃⌥⌘H, or opening the app again (Finder, Spotlight), which also turns click-through off.
@@ -19,6 +19,8 @@ final class OverlayController: NSObject, NSMenuDelegate {
   var onCaptureChange: ((CaptureState) -> Void)?
   /// The user asked how to turn the audio-capture permission on.
   var onShowPermission: (() -> Void)?
+  /// The gear and the quick menu's Settings… item; without it the gear opens the quick menu.
+  var onShowSettings: (() -> Void)?
 
   private let controls = HoverControls()
   private let noticeView = NoticeView()
@@ -187,7 +189,12 @@ final class OverlayController: NSObject, NSMenuDelegate {
       // Without a Dock icon there is no Dock tile to minimize to.
       if OverlayStyle(settings).minimizes { window.miniaturize(nil) } else { hide() }
     case .settings:
-      quickMenu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.minY - 4), in: button)
+      if let onShowSettings {
+        onShowSettings()
+      } else {
+        quickMenu.popUp(
+          positioning: nil, at: NSPoint(x: 0, y: button.bounds.minY - 4), in: button)
+      }
     }
   }
 
@@ -242,6 +249,12 @@ final class OverlayController: NSObject, NSMenuDelegate {
       restart.target = self
       menu.addItem(restart)
     }
+    if onShowSettings != nil {
+      let settings = NSMenuItem(
+        title: "Settings…", action: #selector(showSettings(_:)), keyEquivalent: ",")
+      settings.target = self
+      menu.addItem(settings)
+    }
     let permission = NSMenuItem(
       title: "Audio Permission…", action: #selector(showPermission(_:)), keyEquivalent: "")
     permission.target = self
@@ -278,6 +291,10 @@ final class OverlayController: NSObject, NSMenuDelegate {
 
   @objc private func restartFromMenu(_ item: NSMenuItem) {
     restartCapture()
+  }
+
+  @objc private func showSettings(_ item: NSMenuItem) {
+    onShowSettings?()
   }
 
   @objc private func showPermission(_ item: NSMenuItem) {

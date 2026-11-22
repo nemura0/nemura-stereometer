@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private let store: SettingsStore
   private let permission = PermissionWindow()
   private var menuBar: MenuBarController?
+  private var settingsWindow: SettingsWindow?
   private let probe: MeterProbe?
   private var probeTimerArmed = false
   private var probeDone = false
@@ -44,6 +45,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       menuBar.model.clickThroughShortcut = nil
     }
     self.menuBar = menuBar
+    let settingsWindow = SettingsWindow(model: SettingsModel(store: store))
+    self.settingsWindow = settingsWindow
+    let showSettings: () -> Void = { [weak self] in self?.settingsWindow?.show() }
+    menuBar.onShowSettings = showSettings
+    overlay.onShowSettings = showSettings
     if let probe {
       arm(probe, overlay)
       overlay.startCapture(soundSeenBefore: false)
@@ -81,16 +87,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   private func makeMainMenu() -> NSMenu {
     let appMenu = NSMenu()
+    let settings = NSMenuItem(
+      title: "Settings…", action: #selector(showSettings(_:)), keyEquivalent: ",")
+    settings.target = self
+    appMenu.addItem(settings)
+    appMenu.addItem(.separator())
     appMenu.addItem(
       withTitle: "Quit \(String(cString: nmr_product_name()))",
       action: #selector(NSApplication.terminate(_:)),
       keyEquivalent: "q"
     )
-    let appItem = NSMenuItem()
-    appItem.submenu = appMenu
     let menu = NSMenu()
-    menu.addItem(appItem)
+    for submenu in [appMenu, Self.editMenu(), Self.windowMenu()] {
+      let item = NSMenuItem()
+      item.submenu = submenu
+      menu.addItem(item)
+    }
     return menu
+  }
+
+  /// Text fields (a preset's name) get the standard editing keys from here.
+  private static func editMenu() -> NSMenu {
+    let menu = NSMenu(title: "Edit")
+    menu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+    let redo = menu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
+    redo.keyEquivalentModifierMask = [.command, .shift]
+    menu.addItem(.separator())
+    menu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+    menu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+    menu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+    menu.addItem(
+      withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+    return menu
+  }
+
+  /// ⌘W closes the Settings window (the meter has no title bar to close).
+  private static func windowMenu() -> NSMenu {
+    let menu = NSMenu(title: "Window")
+    menu.addItem(
+      withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+    menu.addItem(
+      withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)),
+      keyEquivalent: "m")
+    return menu
+  }
+
+  @objc private func showSettings(_ sender: Any?) {
+    settingsWindow?.show()
   }
 
   // MARK: - Probe

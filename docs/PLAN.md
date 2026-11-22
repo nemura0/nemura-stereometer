@@ -71,8 +71,17 @@ Legend: `[x]` done and verified, `[~]` in progress / partially verified, `[ ]` n
       `scripts/capture-probe.sh --meter` (signal seen, no notice while sound plays, the notice
       fits at 240 and 720 pt); the denied path itself is covered by unit tests only (the owner's
       grant is never changed)
-- [ ] UI: source picker, menu-bar popover, Settings window, preset import/export, frame-rate
-      setting, `--feed`; the gear opens Settings once it exists (today: the quick menu)
+- [x] Settings kept between runs (`SettingsStore`: the plugin's JSON in the app's defaults;
+      click-through always starts off; the probe keeps nothing)
+- [x] Menu-bar popover: System Output and the capture's state, the mode with thumbnails drawn by
+      the meter's renderer (`ThumbnailRenderer`, from the test mix), preset, background opacity,
+      click-through, Settings…, Quit (checked in-process by `scripts/capture-probe.sh --meter`:
+      icon, layout, a mode chosen there reaches the meter)
+- [x] Settings window (⌘,, the popover, the gear, the quick menu): a sidebar with the schema's
+      groups and Presets, rows generated from the schema (frame rate included), live on the
+      meter; presets saved, imported, exported, deleted; `.map` colormaps imported. The look of
+      the window and the popover on screen is for the owner to check
+- [ ] UI: source picker (System Output + live plugin instances), `--feed <wav>`
 
 ## Phase 4: plugin
 

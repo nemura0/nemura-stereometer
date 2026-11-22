@@ -37,6 +37,11 @@ enum Schema {
   static func spec(_ key: SettingKey) -> SettingSpec? {
     entries.first { $0.key == key.rawValue }
   }
+
+  /// The groups' keys and labels, in the schema's order.
+  static let groups: [(key: String, label: String)] = (0..<nmr_settings_group_count()).map {
+    (borrowedString(nmr_settings_group_key($0)), borrowedString(nmr_settings_group_label($0)))
+  }
 }
 
 extension SettingKey {

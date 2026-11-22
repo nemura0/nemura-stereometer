@@ -19,7 +19,7 @@ final class HoverControls: NSView {
       switch self {
       case .close: "Hide"
       case .minimize: "Minimize"
-      case .settings: "Quick settings"
+      case .settings: "Settings"
       }
     }
   }
