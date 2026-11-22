@@ -235,6 +235,7 @@ bool MeterScene::render(id<MTLCommandBuffer> commands, id<MTLTexture> target,
   frame.draw = settings_.draw;
   frame.shape = settings_.shape;
   frame.clear = clear_next_ || idle_unreported_;
+  frame.glow = settings_.glow;
   frame.layout = layout({.width = static_cast<float>(target.width),
                          .height = static_cast<float>(target.height),
                          .scale = scale,

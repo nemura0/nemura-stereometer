@@ -217,6 +217,32 @@ TEST_CASE("meter scene: the idle frame is cleared, and sound brings the trace ba
   CHECK(s.at(kOffAxis) > 0.3f);
 }
 
+TEST_CASE("meter scene: the glow setting spreads light around the trace") {
+  Stage s;
+  REQUIRE_GPU(s);
+  const ScopePoint kBeside{-0.09f, 0.35f};  // next to (−0.15, 0.35), off the guides
+  const LocalFrameRing ring(1 << 15);
+  s.scene().setSource(ring.view(), kRate);
+  double time = 1;
+  const auto play = [&] {
+    for (int i = 0; i < 10; ++i, time += 1.0 / 60) {
+      writeDc(ring.view(), 0.5f, 0.2f, 800);  // (−0.15, 0.35)
+      s.frame(time);
+    }
+  };
+  MeterSettings settings;
+  settings.look.solid = true;
+  settings.look.solid_color = {1, 1, 1};
+  settings.brightness = 3;
+  s.scene().setSettings(settings);  // the same settings, set again: no glow yet
+  play();
+  CHECK(s.at(kBeside) < 0.01f);
+  settings.glow = 1;  // only the glow changes
+  s.scene().setSettings(settings);
+  play();
+  CHECK(s.at(kBeside) > 0.02f);
+}
+
 TEST_CASE("meter scene: new settings are drawn while idle") {
   Stage s;
   REQUIRE_GPU(s);

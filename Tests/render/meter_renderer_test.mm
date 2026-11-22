@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 #include <memory>
 #include <vector>
 
@@ -65,9 +66,9 @@ class Harness {
   }
 
   // Renders and waits; true when the frame was drawn.
-  bool render(const MeterFrame& frame) {
+  bool render(const MeterFrame& frame, float scale = 1) {
     id<MTLCommandBuffer> commands = [queue_ commandBuffer];
-    const bool drawn = renderer_->encode(commands, target_, frame);
+    const bool drawn = renderer_->encode(commands, target_, frame, scale);
     id<MTLBlitCommandEncoder> blit = [commands blitCommandEncoder];
     [blit copyFromTexture:target_
                      sourceSlice:0
@@ -479,4 +480,89 @@ TEST_CASE("meter renderer: a clear asked for in a skipped frame is kept for the 
   [pending.back() waitUntilCompleted];
   REQUIRE(h.render(keep));
   CHECK(h.at({0.3f, 0.3f}).peak() < 0.02f);
+}
+
+namespace {
+
+// The brightest channel `d` pixels from where `p` lands: right, left, down and up.
+std::array<float, 4> around(const Harness& h, ScopePoint p, float d) {
+  const auto [x, y] = h.place(p);
+  return {h.pixel(x + d, y).peak(), h.pixel(x - d, y).peak(), h.pixel(x, y + d).peak(),
+          h.pixel(x, y - d).peak()};
+}
+
+// `spot`: the points, kept alive by the caller (64 copies of one point make a bright dot).
+MeterFrame spotFrame(const Harness& h, const std::vector<ScopePoint>& spot, float glow) {
+  MeterFrame f = h.frame();
+  f.points = spot;
+  f.glow = glow;
+  f.clear = true;
+  return f;
+}
+
+}  // namespace
+
+TEST_CASE("meter renderer: glow spreads light around the trace, scaled by the amount") {
+  Harness h;
+  REQUIRE_GPU(h);
+  const std::vector<ScopePoint> spot(64, ScopePoint{0.3f, 0.3f});
+  const auto [x, y] = h.place(spot[0]);
+  const auto measure = [&](float glow) {
+    REQUIRE(h.render(spotFrame(h, spot, glow)));
+    return std::array<float, 3>{h.pixel(x, y).peak(), h.pixel(x + 8, y).peak(),
+                                h.pixel(x + 40, y).peak()};
+  };
+  const auto none = measure(0);
+  const auto half = measure(0.5f);
+  const auto full = measure(1);
+  CHECK(none[0] > 0.5f);
+  CHECK(none[1] < 0.01f);  // no glow: dark next to the dot
+  CHECK(half[1] > 0.02f);
+  CHECK(full[1] > half[1] * 1.3f);  // more glow, more light around
+  CHECK(full[2] < 0.01f);  // and it stays near the trace
+  CHECK(full[0] >= none[0]);
+  // Out-of-range amounts are clamped; a NaN is no glow.
+  CHECK(measure(5)[1] == doctest::Approx(full[1]).epsilon(0.02));
+  CHECK(measure(-1)[1] == doctest::Approx(none[1]).epsilon(0.02));
+  CHECK(measure(std::numeric_limits<float>::quiet_NaN())[1] < 0.01f);
+}
+
+TEST_CASE("meter renderer: glow is centered on the trace, whatever the scope's size") {
+  Harness h;
+  REQUIRE_GPU(h);
+  // A dot at the center of a 4 × 4 pixel block (a bloom texel at scale 1), far from the
+  // scope's origin, where a stretched glow would land off the dot.
+  constexpr float kLocal = 114;
+  const float half = MeterRenderer::kFullScale / 2;
+  const auto even = [](float a, float b) { return std::abs(a - b) <= 0.08f * std::max(a, b); };
+  for (const float side : {149.0f, 152.0f, 153.0f}) {  // 152 is a multiple of the divisor
+    CAPTURE(side);
+    Layout layout = h.layout();
+    layout.scope = {20, 20, side, side};
+    h.setLayout(layout);
+    const ScopePoint p{(kLocal / side - 0.5f) / half, (0.5f - kLocal / side) / half};
+    const std::vector<ScopePoint> spot(64, p);
+    REQUIRE(h.render(spotFrame(h, spot, 1)));
+    const auto light = around(h, p, 7.5f);  // pixel centers 7.5 px either side
+    INFO(light[0] << " " << light[1] << " " << light[2] << " " << light[3]);
+    CHECK(light[0] > 0.02f);
+    CHECK(even(light[0], light[1]));
+    CHECK(light[2] > 0.02f);
+    CHECK(even(light[2], light[3]));
+  }
+}
+
+TEST_CASE("meter renderer: glow spreads the same distance in points at any scale") {
+  Harness h;
+  REQUIRE_GPU(h);
+  const std::vector<ScopePoint> spot(64, ScopePoint{0.3f, -0.2f});
+  REQUIRE(h.render(spotFrame(h, spot, 1), 1));
+  const auto one = around(h, spot[0], 24);
+  REQUIRE(h.render(spotFrame(h, spot, 1), 2));
+  const auto two = around(h, spot[0], 24);  // 12 pt at scale 2, 24 pt at scale 1
+  for (size_t i = 0; i < one.size(); ++i) {
+    CAPTURE(i);
+    CHECK(one[i] < 0.01f);
+    CHECK(two[i] > 0.015f);
+  }
 }

@@ -39,6 +39,7 @@ struct MeterSettings {
   dsp::AnalyzerConfig analyzer{};
   double trail_s = 0.1;
   float brightness = 1;
+  float glow = 0;  // 0 … 1
   float point_size_pt = 2;
   float line_thickness_pt = 1.5f;
   uint32_t density = 2;

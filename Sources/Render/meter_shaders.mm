@@ -32,7 +32,8 @@ struct CompositeUniforms {
   float tone_gain;
   float whiten;
   float guide_px;
-  float2 pad;
+  float glow;
+  float glow_divisor;  // scope pixels per bloom texel
 };
 
 struct GuideSegment {
@@ -78,6 +79,13 @@ static float2 scopePixel(float2 p, float2 size, float full_scale) {
 
 static float4 pixelToClip(float2 px, float2 size) {
   return float4(px.x / size.x * 2.0 - 1.0, 1.0 - px.y / size.y * 2.0, 0.0, 1.0);
+}
+
+// Light that is NaN or infinite counts as dark. Tested on the bits: fast math may fold
+// isfinite() to true.
+static float3 finiteLight(float3 c) {
+  const bool finite = all((as_type<uint3>(c) & 0x7f800000u) != 0x7f800000u);
+  return finite ? max(c, 0.0) : 0.0;
 }
 
 static float2 quadCorner(uint vid) {  // triangle strip: (-1,-1) (1,-1) (-1,1) (1,1)
@@ -199,14 +207,56 @@ vertex ImageVertex image_vertex(uint vid [[vertex_id]],
 // light shows.
 fragment float4 image_fragment(ImageVertex in [[stage_in]],
                                constant CompositeUniforms& u [[buffer(1)]],
-                               texture2d<float, access::read> light [[texture(0)]]) {
+                               texture2d<float, access::read> light [[texture(0)]],
+                               texture2d<float> glow [[texture(1)]]) {
   const uint2 size = uint2(light.get_width(), light.get_height());
-  const uint2 coord = min(uint2(max(in.position.xy - u.scope_rect.xy, 0.0)), size - 1);
-  const float3 c = max(light.read(coord).rgb, 0.0);
+  const float2 local = max(in.position.xy - u.scope_rect.xy, 0.0);
+  const uint2 coord = min(uint2(local), size - 1);
+  float3 c = finiteLight(light.read(coord).rgb);
+  if (u.glow > 0.0) {
+    constexpr sampler linear(filter::linear, address::clamp_to_edge);
+    // The bloom's texels cover glow_divisor pixels each, up to a little past the scope.
+    const float2 covered = float2(glow.get_width(), glow.get_height()) * u.glow_divisor;
+    c += u.glow * max(glow.sample(linear, local / covered).rgb, 0.0);
+  }
   const float3 m = 1.0 - exp(-c * u.tone_gain);
   const float white = 1.0 - exp(-(c.r + c.g + c.b) * u.tone_gain * u.whiten);
   const float3 rgb = m + (1.0 - m) * white;
   return float4(rgb, max(rgb.r, max(rgb.g, rgb.b)));
+}
+
+// The bloom, at kGlowTexelPt points per texel: each texel averages its divisor × divisor
+// pixels (those inside the scope; a NaN or infinite one counts as dark, so a bad pixel cannot
+// spread), then a 9-tap Gaussian (σ ≈ 2 texels, as 5 linear taps) runs across and down.
+fragment float4 glow_down_fragment(ImageVertex in [[stage_in]],
+                                   constant uint& divisor [[buffer(0)]],
+                                   texture2d<float, access::read> light [[texture(0)]]) {
+  const uint2 size = uint2(light.get_width(), light.get_height());
+  const uint2 base = uint2(in.position.xy) * divisor;
+  const uint2 end = min(base + divisor, size);
+  float3 sum = 0.0;
+  for (uint y = base.y; y < end.y; ++y) {
+    for (uint x = base.x; x < end.x; ++x) {
+      sum += finiteLight(light.read(uint2(x, y)).rgb);
+    }
+  }
+  const uint2 count = end - min(base, end);
+  return float4(sum / max(float(count.x * count.y), 1.0), 0.0);
+}
+
+fragment float4 glow_blur_fragment(ImageVertex in [[stage_in]],
+                                   constant float2& direction [[buffer(0)]],
+                                   texture2d<float> source [[texture(0)]]) {
+  constexpr sampler linear(filter::linear, address::clamp_to_edge);
+  const float2 size = float2(source.get_width(), source.get_height());
+  const float2 uv = in.position.xy / size;
+  const float2 step = direction / size;
+  float3 sum = 0.2270270270 * source.sample(linear, uv).rgb;
+  sum += 0.3162162162 * (source.sample(linear, uv + 1.3846153846 * step).rgb +
+                         source.sample(linear, uv - 1.3846153846 * step).rgb);
+  sum += 0.0702702703 * (source.sample(linear, uv + 3.2307692308 * step).rgb +
+                         source.sample(linear, uv - 3.2307692308 * step).rgb);
+  return float4(sum, 0.0);
 }
 
 vertex RectVertex rect_vertex(uint vid [[vertex_id]], uint iid [[instance_id]],

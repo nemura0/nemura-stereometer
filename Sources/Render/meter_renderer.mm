@@ -36,7 +36,8 @@ struct CompositeUniforms {
   float tone_gain;
   float whiten;
   float guide_px;
-  simd_float2 pad;
+  float glow;          // the light added from the bloom, × its blurred light
+  float glow_divisor;  // scope pixels per bloom texel
 };
 static_assert(sizeof(CompositeUniforms) == 48);
 
@@ -87,6 +88,20 @@ Configure blended(MTLPixelFormat format, MTLBlendFactor source, MTLBlendFactor d
   };
 }
 
+Configure opaque(MTLPixelFormat format) {
+  return ^(MTLRenderPipelineDescriptor* d) { d.colorAttachments[0].pixelFormat = format; };
+}
+
+id<MTLTexture> lightTexture(id<MTLDevice> device, uint32_t width, uint32_t height) {
+  MTLTextureDescriptor* d = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:kLightFormat
+                                                                               width:width
+                                                                              height:height
+                                                                           mipmapped:NO];
+  d.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+  d.storageMode = MTLStorageModePrivate;
+  return [device newTextureWithDescriptor:d];
+}
+
 }  // namespace
 
 MeterRenderer::MeterRenderer(id<MTLDevice> device, MTLPixelFormat target_format)
@@ -115,13 +130,17 @@ MeterRenderer::MeterRenderer(id<MTLDevice> device, MTLPixelFormat target_format)
                      blended(target_format, kOne, kOne, MTLBlendOperationMax));
   rects_ = pipeline([@"rects/" stringByAppendingString:target], @"rect_vertex", @"rect_fragment",
                     blended(target_format, kOne, over));
+  glow_down_ = pipeline(@"glow_down", @"fullscreen_vertex", @"glow_down_fragment",
+                        opaque(kLightFormat));
+  glow_blur_ = pipeline(@"glow_blur", @"fullscreen_vertex", @"glow_blur_fragment",
+                        opaque(kLightFormat));
   bool buffers = true;
   for (auto& buffer : buffers_) {
     buffer = [device newBufferWithLength:kSlotBytes options:MTLResourceStorageModeShared];
     buffers = buffers && buffer != nil;
   }
   ready_ = buffers && decay_ != nil && dots_ != nil && trace_ != nil && image_ != nil &&
-           guides_ != nil && rects_ != nil;
+           guides_ != nil && rects_ != nil && glow_down_ != nil && glow_blur_ != nil;
   if (!ready_) os_log_error(OS_LOG_DEFAULT, "nmr: the meter renderer could not be set up");
   const colormap::Builtin* iris = colormap::findBuiltin(colormap::kDefaultKey);
   if (iris != nullptr) colormap_ = colormap::table(iris->stops);
@@ -129,16 +148,48 @@ MeterRenderer::MeterRenderer(id<MTLDevice> device, MTLPixelFormat target_format)
 
 void MeterRenderer::setColormap(const colormap::Table& table) noexcept { colormap_ = table; }
 
-void MeterRenderer::ensureScope(uint32_t width, uint32_t height) {
-  if (scope_ != nil && scope_.width == width && scope_.height == height) return;
-  MTLTextureDescriptor* d = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:kLightFormat
-                                                                               width:width
-                                                                              height:height
-                                                                           mipmapped:NO];
-  d.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
-  d.storageMode = MTLStorageModePrivate;
-  scope_ = [device_ newTextureWithDescriptor:d];
+bool MeterRenderer::ensureScope(uint32_t width, uint32_t height) {
+  if (scope_ != nil && scope_.width == width && scope_.height == height) return true;
+  scope_ = lightTexture(device_, width, height);
   scope_clear_ = true;
+  return scope_ != nil;
+}
+
+bool MeterRenderer::ensureGlow(uint32_t divisor) {
+  const NSUInteger width = (scope_.width + divisor - 1) / divisor;
+  const NSUInteger height = (scope_.height + divisor - 1) / divisor;
+  if (glow_ != nil && glow_spare_ != nil && glow_divisor_ == divisor && glow_.width == width &&
+      glow_.height == height) {
+    return true;
+  }
+  glow_ = lightTexture(device_, static_cast<uint32_t>(width), static_cast<uint32_t>(height));
+  glow_spare_ = lightTexture(device_, static_cast<uint32_t>(width), static_cast<uint32_t>(height));
+  glow_divisor_ = divisor;
+  return glow_ != nil && glow_spare_ != nil;
+}
+
+// The bloom: the light averaged over glow_divisor_ × glow_divisor_ pixel blocks, then a
+// Gaussian blur across and down.
+void MeterRenderer::encodeGlow(id<MTLCommandBuffer> commands) {
+  const auto pass = [&](id<MTLTexture> into, id<MTLRenderPipelineState> state, id<MTLTexture> from,
+                        const void* bytes, NSUInteger length) {
+    MTLRenderPassDescriptor* d = [MTLRenderPassDescriptor renderPassDescriptor];
+    d.colorAttachments[0].texture = into;
+    d.colorAttachments[0].loadAction = MTLLoadActionDontCare;
+    d.colorAttachments[0].storeAction = MTLStoreActionStore;
+    id<MTLRenderCommandEncoder> encoder = [commands renderCommandEncoderWithDescriptor:d];
+    [encoder setRenderPipelineState:state];
+    [encoder setFragmentTexture:from atIndex:0];
+    [encoder setFragmentBytes:bytes length:length atIndex:0];
+    [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+    [encoder endEncoding];
+  };
+  const uint32_t divisor = glow_divisor_;
+  const simd_float2 across = simd_make_float2(1, 0);
+  const simd_float2 down = simd_make_float2(0, 1);
+  pass(glow_, glow_down_, scope_, &divisor, sizeof(divisor));
+  pass(glow_spare_, glow_blur_, glow_, &across, sizeof(across));
+  pass(glow_, glow_blur_, glow_spare_, &down, sizeof(down));
 }
 
 bool MeterRenderer::encode(id<MTLCommandBuffer> commands, id<MTLTexture> target,
@@ -169,12 +220,24 @@ bool MeterRenderer::encode(id<MTLCommandBuffer> commands, id<MTLTexture> target,
   const float x = std::round(s.x);
   const float y = std::round(s.y);
   scope_rect_ = {x, y, std::round(s.x + s.width) - x, std::round(s.y + s.height) - y};
-  if (scope_rect_.width >= 1 && scope_rect_.height >= 1) {
-    ensureScope(static_cast<uint32_t>(scope_rect_.width),
-                static_cast<uint32_t>(scope_rect_.height));
+  const float px = std::isfinite(scale) && scale > 0 ? scale : 1;
+  float glow = std::isfinite(frame.glow) ? std::clamp(frame.glow, 0.0f, 1.0f) * kGlowGain : 0.0f;
+  if (scope_rect_.width >= 1 && scope_rect_.height >= 1 &&
+      ensureScope(static_cast<uint32_t>(scope_rect_.width),
+                  static_cast<uint32_t>(scope_rect_.height))) {
     encodeScope(commands, slot, frame);
+    // The bloom's texel stays kGlowTexelPt points wide, so it spreads as far at any scale.
+    const auto divisor = static_cast<uint32_t>(
+        std::clamp(std::round(px * kGlowTexelPt), 1.0f, float{kMaxGlowDivisor}));
+    if (glow > 0 && ensureGlow(divisor)) {
+      encodeGlow(commands);
+    } else {
+      glow = 0;
+    }
+  } else {
+    glow = 0;
   }
-  encodeComposite(commands, target, slot, frame, std::isfinite(scale) && scale > 0 ? scale : 1);
+  encodeComposite(commands, target, slot, frame, px, glow);
   return true;
 }
 
@@ -245,7 +308,8 @@ void MeterRenderer::encodeScope(id<MTLCommandBuffer> commands, id<MTLBuffer> slo
 }
 
 void MeterRenderer::encodeComposite(id<MTLCommandBuffer> commands, id<MTLTexture> target,
-                                    id<MTLBuffer> slot, const MeterFrame& frame, float scale) {
+                                    id<MTLBuffer> slot, const MeterFrame& frame, float scale,
+                                    float glow) {
   const Premultiplied& bg = frame.look.background;
   MTLRenderPassDescriptor* pass = [MTLRenderPassDescriptor renderPassDescriptor];
   pass.colorAttachments[0].texture = target;
@@ -262,9 +326,11 @@ void MeterRenderer::encodeComposite(id<MTLCommandBuffer> commands, id<MTLTexture
   u.tone_gain = kToneGain;
   u.whiten = kWhiten;
   u.guide_px = kGuidePt * scale;
+  u.glow = glow;
+  u.glow_divisor = static_cast<float>(glow_divisor_);
   [encoder setVertexBytes:&u length:sizeof(u) atIndex:1];
   [encoder setFragmentBytes:&u length:sizeof(u) atIndex:1];
-  const bool has_scope = scope_rect_.width >= 1 && scope_rect_.height >= 1;
+  const bool has_scope = scope_rect_.width >= 1 && scope_rect_.height >= 1 && scope_ != nil;
 
   uint32_t segments = 0;
   if (frame.guides != nullptr && has_scope) {
@@ -288,6 +354,7 @@ void MeterRenderer::encodeComposite(id<MTLCommandBuffer> commands, id<MTLTexture
   if (has_scope) {
     [encoder setRenderPipelineState:image_];
     [encoder setFragmentTexture:scope_ atIndex:0];
+    [encoder setFragmentTexture:u.glow > 0 ? glow_ : scope_ atIndex:1];  // unread without glow
     [encoder drawPrimitives:MTLPrimitiveTypeTriangleStrip vertexStart:0 vertexCount:4];
   }
 

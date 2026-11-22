@@ -42,7 +42,7 @@ Legend: `[x]` done and verified, `[~]` in progress / partially verified, `[ ]` n
 ## Phase 2: renderer and NEMURA mode
 
 - [~] Shared renderer: all modes, view options, color modes, shapes, lines, guides, meters
-      done (offscreen GPU tests); glow and numeric readouts pending
+      done (offscreen GPU tests); glow done; numeric readouts pending
 - [x] Paced playhead, Auto frame rate, idle stop; the render thread runs the DSP with FTZ/DAZ
       in the x86_64 slice (its filters decay into subnormals in silence); the plugin editor
       shows its input (the app's capture is wired in Phase 3)

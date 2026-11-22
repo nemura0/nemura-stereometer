@@ -4,8 +4,8 @@
 //   nmr_snapshot <in.wav> <out.png> [--mode goniometer|goniometer_log|half|half_log|lissajous]
 //       [--at SECONDS] [--size PX] [--scale S] [--fps F] [--draw dots|lines] [--trail MS]
 //       [--density N] [--point PT] [--line PT] [--shape soft|circle|square] [--brightness PCT]
-//       [--guides off|subtle|full] [--color frequency|solid|amplitude|midside] [--colormap KEY]
-//       [--background RRGGBBAA] [--meters on|off] [--readouts on|off]
+//       [--glow PCT] [--guides off|subtle|full] [--color frequency|solid|amplitude|midside]
+//       [--colormap KEY] [--background RRGGBBAA] [--meters on|off] [--readouts on|off]
 //
 // It draws the second before --at at --fps, each frame taking the next rate / fps samples (an
 // ideal playhead), so the trail is settled.
@@ -194,6 +194,7 @@ int main(int argc, char** argv) {
     frame.guides = &guides;
     frame.style = nmr::scopeStyle(style_input);
     frame.draw = style_input.style;
+    frame.glow = static_cast<float>(number(o, "glow", 0) / 100);
     frame.shape = shape == "circle"   ? nmr::PointShape::kCircle
                   : shape == "square" ? nmr::PointShape::kSquare
                                       : nmr::PointShape::kSoft;
