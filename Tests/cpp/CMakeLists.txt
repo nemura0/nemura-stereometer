@@ -8,11 +8,13 @@ add_executable(nmr_tests
   files_test.cpp
   frame_ring_test.cpp
   frame_rate_test.cpp
+  guides_test.cpp
   idle_test.cpp
   layout_test.cpp
   playhead_test.cpp
   presets_test.cpp
   product_config_test.cpp
+  scope_style_test.cpp
   settings_test.cpp
   shm_transport_test.cpp)
 # Core-internal headers (settings_migration.h) and nlohmann/json, which the migration tests use.
