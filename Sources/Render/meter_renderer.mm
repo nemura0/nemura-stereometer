@@ -39,8 +39,9 @@ struct CompositeUniforms {
   float guide_px;
   float glow;          // the light added from the bloom, × its blurred light
   float glow_divisor;  // scope pixels per bloom texel
+  simd_float4 glow_color;
 };
-static_assert(sizeof(CompositeUniforms) == 48);
+static_assert(sizeof(CompositeUniforms) == 64);
 
 struct GpuSegment {
   simd_float2 a;
@@ -84,6 +85,15 @@ constexpr uint32_t kAllSlots = (1u << MeterRenderer::kFramesInFlight) - 1;
 constexpr MTLPixelFormat kLightFormat = MTLPixelFormatRGBA16Float;
 
 simd_float4 simdOf(const Premultiplied& c) { return simd_make_float4(c[0], c[1], c[2], c[3]); }
+
+const Premultiplied& guideColor(GuideKind kind, const MeterLook& look) {
+  switch (kind) {
+    case GuideKind::kStrong: return look.guide_strong;
+    case GuideKind::kRing: return look.ring;
+    case GuideKind::kWeak: break;
+  }
+  return look.guide_weak;
+}
 
 using Configure = void (^)(MTLRenderPipelineDescriptor*);
 
@@ -341,10 +351,14 @@ void MeterRenderer::encodeComposite(id<MTLCommandBuffer> commands, id<MTLTexture
   u.target_size = simd_make_float2(target.width, target.height);
   u.full_scale = kFullScale;
   u.tone_gain = kToneGain;
-  u.whiten = kWhiten;
+  u.whiten = std::isfinite(frame.look.whiten) ? std::clamp(frame.look.whiten, 0.0f, kMaxWhiten)
+                                              : kWhiten;
   u.guide_px = kGuidePt * scale;
   u.glow = glow;
   u.glow_divisor = static_cast<float>(glow_divisor_);
+  const auto& gc = frame.look.glow_color;
+  const auto channel = [](float v) { return std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 1; };
+  u.glow_color = simd_make_float4(channel(gc[0]), channel(gc[1]), channel(gc[2]), 0);
   [encoder setVertexBytes:&u length:sizeof(u) atIndex:1];
   [encoder setFragmentBytes:&u length:sizeof(u) atIndex:1];
   const bool has_scope = scope_rect_.width >= 1 && scope_rect_.height >= 1 && scope_ != nil;
@@ -357,7 +371,7 @@ void MeterRenderer::encodeComposite(id<MTLCommandBuffer> commands, id<MTLTexture
     for (uint32_t i = 0; i < segments; ++i) {
       const GuideSegment& g = frame.guides->segments[i];
       out[i] = {simd_make_float2(g.a.x, g.a.y), simd_make_float2(g.b.x, g.b.y),
-                simdOf(g.strong ? frame.look.guide_strong : frame.look.guide_weak)};
+                simdOf(guideColor(g.kind, frame.look))};
     }
   }
   if (segments > 0) {

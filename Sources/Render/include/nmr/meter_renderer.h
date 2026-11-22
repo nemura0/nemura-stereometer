@@ -36,6 +36,8 @@ namespace nmr {
 
 enum class PointShape : uint8_t { kSoft, kCircle, kSquare };  // the point_shape setting's order
 
+inline constexpr float kDefaultWhiten = 0.12f;  // how fast hot light turns white, by default
+
 struct MeterLook {
   Premultiplied background{0, 0, 0, 0};
   bool solid = false;                       // one color instead of the colormap
@@ -44,6 +46,9 @@ struct MeterLook {
   float map_high = 1;
   Premultiplied guide_strong{0.16f, 0.16f, 0.18f, 0.22f};
   Premultiplied guide_weak{0.07f, 0.07f, 0.08f, 0.10f};
+  Premultiplied ring{0.62f, 0.64f, 0.70f, 0.75f};  // the 0 dBFS ring, when the guides have it
+  float whiten = kDefaultWhiten;  // how fast the hottest light turns white (0 … kMaxWhiten)
+  std::array<float, 3> glow_color{1, 1, 1};  // the glow's light is multiplied by it (0 … 1)
   MeterPalette meters{};
 };
 
@@ -72,7 +77,8 @@ class MeterRenderer {
   static constexpr long kFramesInFlight = 3;
   static constexpr float kFullScale = 0.94f;
   static constexpr float kToneGain = 1.6f;  // composite: 1 − exp(−light × gain)
-  static constexpr float kWhiten = 0.12f;   // and hot light turning white
+  static constexpr float kWhiten = kDefaultWhiten;  // and hot light turning white
+  static constexpr float kMaxWhiten = 1;
   static constexpr float kGuidePt = 1;      // guide thickness
   static constexpr uint32_t kGlowTexelPt = 4;  // the bloom's texel, in points (whole pixels)
   static constexpr uint32_t kMaxGlowDivisor = 16;  // its texel at most, in pixels

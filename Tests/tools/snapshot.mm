@@ -5,8 +5,13 @@
 //       [--at SECONDS] [--size PX] [--scale S] [--fps F] [--draw dots|lines] [--trail MS]
 //       [--density N] [--point PT] [--line PT] [--shape soft|circle|square] [--brightness PCT]
 //       [--glow PCT] [--guides off|subtle|full] [--color frequency|solid|amplitude|midside]
-//       [--colormap KEY] [--background RRGGBBAA] [--meters on|off] [--readouts on|off]
+//       [--colormap KEY] [--stops T:RRGGBB,...] [--background RRGGBBAA] [--meters on|off]
+//       [--readouts on|off] [--ring RRGGBBAA] [--guide-strong RRGGBBAA] [--guide-weak RRGGBBAA]
+//       [--whiten N] [--glow-color RRGGBB] [--glow-warn RRGGBB]
 //
+// --stops replaces the colormap with these stops (positions 0 … 1, ascending). --ring draws the
+// 0 dBFS ring in that color. --glow-warn mixes the glow color toward it as the correlation goes
+// negative (nmr::phaseWarning), frame by frame.
 // It draws the second before --at at --fps, each frame taking the next rate / fps samples (an
 // ideal playhead), so the trail is settled.
 #import <CoreGraphics/CoreGraphics.h>
@@ -18,9 +23,12 @@
 #include <nmr/dsp.h>
 #include <nmr/guides.h>
 #include <nmr/layout.h>
+#include <nmr/meter_bars.h>
 #include <nmr/meter_renderer.h>
 #include <nmr/scope_style.h>
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -85,11 +93,58 @@ double number(const Options& o, const std::string& key, double fallback) {
   return it == o.end() ? fallback : std::atof(it->second.c_str());
 }
 
+// `digits` hex digits, or nothing.
+std::optional<uint32_t> hexValue(const std::string& hex, size_t digits) {
+  if (hex.size() != digits || hex.find_first_not_of("0123456789abcdefABCDEF") != hex.npos) {
+    return std::nullopt;
+  }
+  return static_cast<uint32_t>(std::strtoul(hex.c_str(), nullptr, 16));
+}
+
+[[noreturn]] void badOption(const std::string& what) {
+  std::fprintf(stderr, "nmr_snapshot: %s\n", what.c_str());
+  std::exit(2);
+}
+
+// RRGGBBAA.
 nmr::Premultiplied premultiplied(const std::string& hex) {
-  const auto v = static_cast<uint32_t>(std::strtoul(hex.c_str(), nullptr, 16));
+  const std::optional<uint32_t> parsed = hexValue(hex, 8);
+  if (!parsed) badOption("colors with alpha are RRGGBBAA, not " + hex);
+  const uint32_t v = *parsed;
   const float a = (v & 0xff) / 255.0f;
   return {((v >> 24) & 0xff) / 255.0f * a, ((v >> 16) & 0xff) / 255.0f * a,
           ((v >> 8) & 0xff) / 255.0f * a, a};
+}
+
+// RRGGBB.
+std::array<float, 3> rgb(const std::string& hex) {
+  const std::optional<uint32_t> parsed = hexValue(hex, 6);
+  if (!parsed) badOption("colors are RRGGBB, not " + hex);
+  const uint32_t v = *parsed;
+  return {((v >> 16) & 0xff) / 255.0f, ((v >> 8) & 0xff) / 255.0f, (v & 0xff) / 255.0f};
+}
+
+// "0:FFFFFF,0.5:8993FF,1:E03C60": positions 0 … 1, ascending (empty when malformed).
+std::vector<nmr::colormap::Stop> parseStops(const std::string& list) {
+  std::vector<nmr::colormap::Stop> stops;
+  size_t from = 0;
+  while (from < list.size()) {
+    const size_t end = std::min(list.find(',', from), list.size());
+    const std::string item = list.substr(from, end - from);
+    const size_t colon = item.find(':');
+    if (colon == std::string::npos) return {};
+    char* rest = nullptr;
+    const float position = std::strtof(item.c_str(), &rest);
+    const std::optional<uint32_t> v = hexValue(item.substr(colon + 1), 6);
+    if (rest != item.c_str() + colon || !v || !(position >= 0 && position <= 1) ||
+        (!stops.empty() && position < stops.back().position)) {
+      return {};
+    }
+    const auto byte = [v](int shift) { return static_cast<uint8_t>((*v >> shift) & 0xff); };
+    stops.push_back({position, {byte(16), byte(8), byte(0), 255}});
+    from = end + 1;
+  }
+  return stops;
 }
 
 bool writePng(const char* path, const void* bgra, uint32_t width, uint32_t height) {
@@ -173,7 +228,7 @@ int main(int argc, char** argv) {
     const nmr::Guides guides = nmr::guides(guide_level == "off"    ? nmr::GuideLevel::kOff
                                            : guide_level == "full" ? nmr::GuideLevel::kFull
                                                                    : nmr::GuideLevel::kSubtle,
-                                           config.map);
+                                           config.map, o.count("ring") != 0);
 
     const std::string draw = option(o, "draw", lissajous ? "lines" : "dots");
     const std::string shape = option(o, "shape", "soft");
@@ -200,6 +255,14 @@ int main(int argc, char** argv) {
                                       : nmr::PointShape::kSoft;
     frame.look.background = premultiplied(option(o, "background", "08080CFF"));
     frame.look.solid = config.color == nmr::dsp::ColorMode::kSolid;
+    if (o.count("ring") != 0) frame.look.ring = premultiplied(o.at("ring"));
+    if (o.count("guide-strong") != 0) frame.look.guide_strong = premultiplied(o.at("guide-strong"));
+    if (o.count("guide-weak") != 0) frame.look.guide_weak = premultiplied(o.at("guide-weak"));
+    frame.look.whiten = static_cast<float>(number(o, "whiten", nmr::MeterRenderer::kWhiten));
+    const std::array<float, 3> glow_color = rgb(option(o, "glow-color", "FFFFFF"));
+    const std::optional<std::array<float, 3>> glow_warn =
+        o.count("glow-warn") != 0 ? std::optional(rgb(o.at("glow-warn"))) : std::nullopt;
+    frame.look.glow_color = glow_color;
 
     nmr::MeterRenderer renderer(device, MTLPixelFormatBGRA8Unorm);
     if (!renderer.ready()) {
@@ -212,7 +275,16 @@ int main(int argc, char** argv) {
       std::fprintf(stderr, "nmr_snapshot: no built-in colormap %s\n", map_key.c_str());
       return 1;
     }
-    renderer.setColormap(nmr::colormap::table(map->stops));
+    if (o.count("stops") != 0) {
+      const std::vector<nmr::colormap::Stop> stops = parseStops(o.at("stops"));
+      if (stops.empty()) {
+        std::fprintf(stderr, "nmr_snapshot: --stops wants T:RRGGBB,... (T 0 … 1, ascending)\n");
+        return 1;
+      }
+      renderer.setColormap(nmr::colormap::table(stops));
+    } else {
+      renderer.setColormap(nmr::colormap::table(map->stops));
+    }
 
     MTLTextureDescriptor* d =
         [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
@@ -249,6 +321,12 @@ int main(int argc, char** argv) {
       frame.correlation = analyzer.correlation();
       frame.balance = analyzer.balance();
       frame.correlation_history = history;
+      if (glow_warn) {
+        const float w = nmr::phaseWarning(frame.correlation);
+        for (size_t c = 0; c < 3; ++c) {
+          frame.look.glow_color[c] = glow_color[c] + ((*glow_warn)[c] - glow_color[c]) * w;
+        }
+      }
       id<MTLCommandBuffer> commands = [queue commandBuffer];
       if (!renderer.encode(commands, target, frame, scale)) {
         std::fprintf(stderr, "nmr_snapshot: a frame was skipped\n");

@@ -6,9 +6,11 @@
 // scale; linear L/R the circle through full-scale left and right), and in the log modes the
 // rings at −6, −12, −24 and −48 dB (of the sample's M/S radius, as dsp::amplitudeT) that fall
 // inside the range and the view. The half modes keep the upper half (circles as half circles).
-// Axes are "strong", circles "weak"; the renderer gives each its own alpha. Nothing is drawn
-// twice: a ring that would lie on another circle is left out. The log range is held to
-// dsp::kMinLogRangeDb … kMaxLogRangeDb (NaN: the default), as the analyzer holds it.
+// Axes are "strong", circles "weak"; the renderer gives each its own look. With `ring`, the
+// view's unit circle (0 dBFS in M/S) is drawn at any level as its own kind, the "ring" (in its
+// place among Full's circles). Nothing is drawn twice: a circle that would lie on another is
+// left out. The log range is held to dsp::kMinLogRangeDb … kMaxLogRangeDb (NaN: the default),
+// as the analyzer holds it.
 #pragma once
 
 #include <array>
@@ -20,10 +22,12 @@ namespace nmr {
 
 enum class GuideLevel : uint8_t { kOff, kSubtle, kFull };  // the guides setting's order
 
+enum class GuideKind : uint8_t { kWeak, kStrong, kRing };
+
 struct GuideSegment {
   dsp::Point a;
   dsp::Point b;
-  bool strong = false;
+  GuideKind kind = GuideKind::kWeak;
 };
 
 struct Guides {
@@ -34,6 +38,7 @@ struct Guides {
 };
 
 // `params`: gain is ignored (guides mark full scale and dB of full scale).
-[[nodiscard]] Guides guides(GuideLevel level, const dsp::MapParams& params) noexcept;
+[[nodiscard]] Guides guides(GuideLevel level, const dsp::MapParams& params,
+                            bool ring = false) noexcept;
 
 }  // namespace nmr

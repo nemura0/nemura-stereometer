@@ -169,3 +169,18 @@ TEST_CASE("meter bars: history columns meet on whole pixels, leaving no seams") 
   }
   CHECK(edge == std::round(10.3f + 7));
 }
+
+TEST_CASE("meter bars: the phase warning rises as correlation goes negative") {
+  using nmr::phaseWarning;
+  for (const float c : {1.0f, 0.5f, 0.0f}) CHECK(phaseWarning(c) == 0);
+  for (const float c : {-0.5f, -0.8f, -1.0f, -3.0f}) CHECK(phaseWarning(c) == 1);
+  CHECK(phaseWarning(-0.25f) == doctest::Approx(0.5f));
+  float previous = 0;
+  for (int i = 1; i <= 50; ++i) {  // smooth and rising from 0 to −0.5
+    const float w = phaseWarning(-0.01f * static_cast<float>(i));
+    CHECK(w > previous);
+    CHECK(w - previous < 0.05f);
+    previous = w;
+  }
+  CHECK(phaseWarning(std::nanf("")) == 0);
+}

@@ -32,13 +32,13 @@ class Builder {
     const float dx = end.x - center.x;
     const float dy = end.y - center.y;
     const float t = std::min(reach(center.x, dx), reach(center.y, dy));
-    add(center, {center.x + t * dx, center.y + t * dy}, true);
+    add(center, {center.x + t * dx, center.y + t * dy}, GuideKind::kStrong);
   }
 
   // A circle of `radius` in the M/S plane after the log mapping (the plane mapPoint starts
   // from); skipped when it does not fit the view, would be a dot, or one already drawn is
   // (nearly) the same.
-  void circle(float radius) {
+  void circle(float radius, GuideKind kind = GuideKind::kWeak) {
     const bool lr = !params_.half && params_.orientation == Orientation::kLeftRight;
     const float in_view = lr ? radius * std::numbers::sqrt2_v<float> : radius;
     if (!(in_view >= kMinCircle) || in_view > kInView || circles_ == kMaxCircles) return;
@@ -50,7 +50,7 @@ class Builder {
     Point previous = place(radius, 0);
     for (uint32_t i = 1; i <= Guides::kCircleSegments; ++i) {
       const Point next = place(radius, turn * i / Guides::kCircleSegments);
-      add(previous, next, false);
+      add(previous, next, kind);
       previous = next;
     }
   }
@@ -72,8 +72,8 @@ class Builder {
     return 1;
   }
 
-  void add(Point a, Point b, bool strong) {
-    if (guides_.count < Guides::kMaxSegments) guides_.segments[guides_.count++] = {a, b, strong};
+  void add(Point a, Point b, GuideKind kind) {
+    if (guides_.count < Guides::kMaxSegments) guides_.segments[guides_.count++] = {a, b, kind};
   }
 
   Guides& guides_;
@@ -84,14 +84,19 @@ class Builder {
 
 }  // namespace
 
-Guides guides(GuideLevel level, const MapParams& params) noexcept {
+Guides guides(GuideLevel level, const MapParams& params, bool ring) noexcept {
   Guides result;
-  if (level == GuideLevel::kOff) return result;
   MapParams view = params;
   view.gain = 1;
   view.log_range_db = dsp::clampOr(view.log_range_db, dsp::kMinLogRangeDb, dsp::kMaxLogRangeDb,
                                    dsp::kDefaultLogRangeDb);
   Builder build(result, view);
+  // The view's unit circle: in M/S full scale; in L/R the circle through full-scale left and
+  // right (linear; in log, a ring at 1/√2 of the log radius).
+  const bool lr = !view.half && view.orientation == Orientation::kLeftRight;
+  const float unit = lr ? 1 / std::numbers::sqrt2_v<float> : 1.0f;
+  if (ring) build.circle(unit, GuideKind::kRing);  // Full's unit circle is then left out
+  if (level == GuideLevel::kOff) return result;
   for (float sign : {1.0f, -1.0f}) {
     build.axis(sign, sign);  // mono
     build.axis(sign, 0);     // left only
@@ -100,10 +105,7 @@ Guides guides(GuideLevel level, const MapParams& params) noexcept {
   if (level != GuideLevel::kFull) return result;
   build.axis(1, -1);  // side (anti-phase)
   build.axis(-1, 1);
-  // The view's unit circle: in M/S full scale; in L/R the circle through full-scale left and
-  // right (linear; in log, a ring at 1/√2 of the log radius).
-  const bool lr = !view.half && view.orientation == Orientation::kLeftRight;
-  build.circle(lr ? 1 / std::numbers::sqrt2_v<float> : 1.0f);
+  build.circle(unit);
   if (view.scale == dsp::Scale::kLog) {
     for (float db : kRingsDb) {
       build.circle(1 + db / view.log_range_db);  // = logRadius(level, range), exactly

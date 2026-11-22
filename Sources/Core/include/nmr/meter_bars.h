@@ -42,6 +42,11 @@ struct MeterBars {
   uint32_t count = 0;
 };
 
+// How strongly a look warns of phase trouble: 0 at a correlation of 0 or above, rising
+// smoothly to 1 at kPhaseWarningFull and below (not a number: 0).
+inline constexpr float kPhaseWarningFull = -0.5f;
+[[nodiscard]] float phaseWarning(float correlation) noexcept;
+
 [[nodiscard]] MeterBars meterBars(const Layout& layout, float correlation, float balance,
                                   std::span<const float> history,
                                   const MeterPalette& palette = {}) noexcept;

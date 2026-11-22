@@ -53,3 +53,4 @@ MiniMeters procedure (Checkpoint A):
 | Area | Result | Budget | How | Date |
 |---|---|---|---|---|
 | Plugin audio thread: write + publish 256 stereo frames into a shared ring, plus the owner-checked heartbeat | arm64: p50 83 ns, p99 125–167 ns; x86_64 under Rosetta: p50 42 ns, p99 125 ns | p50 ≤ 0.5 µs, p99 ≤ 2 µs | `nmr_tests` RT budget case, Release, 200k runs at user-interactive QoS, three runs each (CI checks it on both architectures; the timer resolution is 41.7 ns) | 2026-11-21 |
+| Paced playhead: samples per frame with host blocks of 256, 1024 and 2048 frames | SD 0.06–0.14 % of the mean (at most ±3 samples around 400 or 800); no sample skipped or drawn twice | even motion with 2048-frame blocks | the playhead tests' model (a block source up to 0.5 ms late, frame callbacks up to 0.2 ms late), 18 s after a 2 s warm-up, 44.1 and 48 kHz, 60 and 120 Hz; `nmr_tests` gates SD ≤ 0.5 % | 2026-11-22 |

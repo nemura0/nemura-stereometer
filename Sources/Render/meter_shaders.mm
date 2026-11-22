@@ -34,6 +34,7 @@ struct CompositeUniforms {
   float guide_px;
   float glow;
   float glow_divisor;  // scope pixels per bloom texel
+  float4 glow_color;   // its light is multiplied by this
 };
 
 struct GuideSegment {
@@ -230,7 +231,7 @@ fragment float4 image_fragment(ImageVertex in [[stage_in]],
     constexpr sampler linear(filter::linear, address::clamp_to_edge);
     // The bloom's texels cover glow_divisor pixels each, up to a little past the scope.
     const float2 covered = float2(glow.get_width(), glow.get_height()) * u.glow_divisor;
-    c += u.glow * max(glow.sample(linear, local / covered).rgb, 0.0);
+    c += u.glow * u.glow_color.rgb * max(glow.sample(linear, local / covered).rgb, 0.0);
   }
   const float3 m = 1.0 - exp(-c * u.tone_gain);
   const float white = 1.0 - exp(-(c.r + c.g + c.b) * u.tone_gain * u.whiten);

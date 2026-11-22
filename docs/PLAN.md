@@ -47,7 +47,8 @@ Legend: `[x]` done and verified, `[~]` in progress / partially verified, `[ ]` n
       in the x86_64 slice (its filters decay into subnormals in silence); the plugin editor
       shows its input (the app's capture is wired in Phase 3)
 - [x] `scripts/snapshots.sh` renders offscreen PNGs per mode from a test WAV
-- [ ] NEMURA mode: 3 original concepts, a snapshot of each
+- [x] NEMURA mode: 3 original concepts (Iris Bloom, Spine & Wings, Metalheart), a snapshot of
+      each, normal and in antiphase (`scripts/snapshots.sh`)
 - [ ] **CHECKPOINT B** (snapshots, pacing stats, Instant calibrated against the reference)
 
 ## Phase 3: app

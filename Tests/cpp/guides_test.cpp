@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 
+using nmr::GuideKind;
 using nmr::GuideLevel;
 using nmr::Guides;
 using nmr::GuideSegment;
@@ -32,7 +33,7 @@ double distanceToSegment(Point p, const GuideSegment& s) {
 // Whether the point lies on one of the guides (strong ones only, or any).
 bool onGuide(const Guides& g, Point p, bool strong_only, double tolerance = 1e-3) {
   for (uint32_t i = 0; i < g.count; ++i) {
-    if (strong_only && !g.segments[i].strong) continue;
+    if (strong_only && g.segments[i].kind != GuideKind::kStrong) continue;
     if (distanceToSegment(p, g.segments[i]) <= tolerance) return true;
   }
   return false;
@@ -40,7 +41,7 @@ bool onGuide(const Guides& g, Point p, bool strong_only, double tolerance = 1e-3
 
 uint32_t weakSegments(const Guides& g) {
   uint32_t weak = 0;
-  for (uint32_t i = 0; i < g.count; ++i) weak += g.segments[i].strong ? 0 : 1;
+  for (uint32_t i = 0; i < g.count; ++i) weak += g.segments[i].kind == GuideKind::kWeak ? 1 : 0;
   return weak;
 }
 
@@ -87,7 +88,9 @@ TEST_CASE("guides: subtle has no outlines; full adds the side axis and the unit 
     CAPTURE(view.half);
     CAPTURE(static_cast<int>(view.orientation));
     const Guides subtle = guides(GuideLevel::kSubtle, view);
-    for (uint32_t i = 0; i < subtle.count; ++i) CHECK(subtle.segments[i].strong);
+    for (uint32_t i = 0; i < subtle.count; ++i) {
+      CHECK(subtle.segments[i].kind == GuideKind::kStrong);
+    }
     const Guides full = guides(GuideLevel::kFull, view);
     CHECK(full.count > subtle.count);
     // Anti-phase sound lies on the side axis.
@@ -218,5 +221,42 @@ TEST_CASE("guides: gain does not move them") {
   for (uint32_t i = 0; i < a.count; ++i) {
     CHECK(a.segments[i].a.x == b.segments[i].a.x);
     CHECK(a.segments[i].b.y == b.segments[i].b.y);
+  }
+}
+
+namespace {
+
+uint32_t ringSegments(const Guides& g) {
+  uint32_t ring = 0;
+  for (uint32_t i = 0; i < g.count; ++i) ring += g.segments[i].kind == GuideKind::kRing ? 1 : 0;
+  return ring;
+}
+
+}  // namespace
+
+TEST_CASE("guides: the ring is the view's unit circle, at any level") {
+  for (const MapParams& view : allViews()) {
+    CAPTURE(static_cast<int>(view.scale));
+    CAPTURE(view.half);
+    CAPTURE(static_cast<int>(view.orientation));
+    const Guides alone = guides(GuideLevel::kOff, view, true);
+    CHECK(alone.count == Guides::kCircleSegments);
+    CHECK(ringSegments(alone) == alone.count);
+    for (int k = 0; k < 16; ++k) {
+      const double angle = (view.half ? M_PI : 2 * M_PI) * (k + 0.5) / 16;
+      const auto x = static_cast<float>(std::cos(angle));
+      const auto y = static_cast<float>(std::sin(angle));
+      CHECK(onGuide(alone, view.half ? Point{x, 2 * y - 1} : Point{x, y}, false, 2e-3));
+    }
+    for (GuideLevel level : {GuideLevel::kSubtle, GuideLevel::kFull}) {
+      const Guides without = guides(level, view);
+      const Guides with = guides(level, view, true);
+      CHECK(ringSegments(without) == 0);
+      CHECK(ringSegments(with) == Guides::kCircleSegments);
+      // Full's unit circle becomes the ring; nothing else changes.
+      const uint32_t replaced = level == GuideLevel::kFull ? Guides::kCircleSegments : 0;
+      CHECK(weakSegments(with) == weakSegments(without) - replaced);
+      CHECK(with.count == without.count + Guides::kCircleSegments - replaced);
+    }
   }
 }

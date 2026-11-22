@@ -70,4 +70,10 @@ MeterBars meterBars(const Layout& layout, float correlation, float balance,
   return bars;
 }
 
+float phaseWarning(float correlation) noexcept {
+  if (!std::isfinite(correlation)) return 0;
+  const float t = std::clamp(correlation / kPhaseWarningFull, 0.0f, 1.0f);
+  return t * t * (3 - 2 * t);  // smoothstep
+}
+
 }  // namespace nmr

@@ -701,3 +701,69 @@ TEST_CASE("meter renderer: a centered balance reads C, at the readout's right") 
   CHECK(lit.count > 2);
   CHECK(lit.min_x > r.x + 0.6f * r.width);
 }
+
+TEST_CASE("meter renderer: the ring is drawn in its own color") {
+  Harness h;
+  REQUIRE_GPU(h);
+  const nmr::Guides guides = nmr::guides(GuideLevel::kOff, {}, true);
+  MeterFrame f = h.frame();
+  f.guides = &guides;
+  f.look.ring = {0.8f, 0, 0, 0.8f};
+  REQUIRE(h.render(f));
+  const float c = std::cos(0.5f);
+  const float s = std::sin(0.5f);
+  const Rgb on = h.at({c, s});  // on the unit circle, off every axis
+  CHECK(on.r > 0.3f);
+  CHECK(on.b < 0.05f);
+  CHECK(h.at({0.8f * c, 0.8f * s}).peak() < 0.02f);  // inside it: dark
+}
+
+TEST_CASE("meter renderer: whiten turns the hottest light white") {
+  Harness h;
+  REQUIRE_GPU(h);
+  const std::vector<ScopePoint> spot(4, ScopePoint{0.3f, -0.2f});  // bright, not saturated
+  const auto core = [&](float whiten) {
+    MeterFrame f = spotFrame(h, spot, 0);
+    f.look.solid_color = {0x89 / 255.0f, 0x93 / 255.0f, 1.0f};  // iris
+    f.look.whiten = whiten;
+    REQUIRE(h.render(f));
+    const Rgb c = h.at(spot[0]);
+    REQUIRE(c.peak() > 0.1f);
+    return std::min({c.r, c.g, c.b}) / c.peak();  // 1 is white
+  };
+  const float none = core(0);
+  const float some = core(0.12f);
+  const float much = core(0.6f);
+  INFO(none << " " << some << " " << much);
+  CHECK(none < some);
+  CHECK(some < much);
+  CHECK(much > 0.85f);
+}
+
+TEST_CASE("meter renderer: the glow takes the glow color") {
+  Harness h;
+  REQUIRE_GPU(h);
+  const std::vector<ScopePoint> spot(64, ScopePoint{0.3f, -0.2f});
+  const auto white = [&] {  // a white trace, so the halo's tint is the glow color's alone
+    MeterFrame f = spotFrame(h, spot, 1);
+    f.look.solid = true;
+    f.look.solid_color = {1, 1, 1};
+    return f;
+  };
+  const auto halo = [&](std::array<float, 3> color) {
+    MeterFrame f = white();
+    f.look.glow_color = color;
+    REQUIRE(h.render(f));
+    return around(h, spot[0], 8)[0];
+  };
+  REQUIRE(h.render(white()));
+  const Rgb neutral = h.pixel(h.place(spot[0])[0] + 8, h.place(spot[0])[1]);
+  CHECK(neutral.r == doctest::Approx(neutral.b).epsilon(0.05));  // white by default
+  MeterFrame red = white();
+  red.look.glow_color = {1, 0, 0};
+  REQUIRE(h.render(red));
+  const Rgb tinted = h.pixel(h.place(spot[0])[0] + 8, h.place(spot[0])[1]);
+  CHECK(tinted.r > 0.03f);
+  CHECK(tinted.b < 0.25f * tinted.r);
+  CHECK(halo({0, 0, 0}) < 0.01f);  // no color, no glow
+}
