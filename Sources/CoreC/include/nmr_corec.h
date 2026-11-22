@@ -280,8 +280,9 @@ nmr_thumbnailer* nmr_thumbnailer_create(void);
 void nmr_thumbnailer_destroy(nmr_thumbnailer* thumbnailer);  // NULL is ignored
 // Draws `settings` as the app's meter would (the colormap as for nmr_render_view_apply) into
 // `bgra`: width × height pixels (at most 1024 each), premultiplied BGRA, top row first, `scale`
-// pixels per point. Waits for the GPU: call it off the main thread, one thread at a time per
-// thumbnailer. False, writing nothing, for a NULL argument, a size it cannot draw, or a failure.
+// pixels per point (at most 8). Waits for the GPU: call it off the main thread, one thread at a
+// time per thumbnailer, never during nmr_thumbnailer_destroy. False, writing nothing, for a NULL
+// argument, a size or scale it cannot draw, or a failure.
 bool nmr_thumbnailer_render(nmr_thumbnailer* thumbnailer, const nmr_settings* settings,
                             const uint8_t* rgba, uint32_t width, uint32_t height, float scale,
                             uint8_t* bgra);

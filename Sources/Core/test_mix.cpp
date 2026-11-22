@@ -23,6 +23,8 @@ double noise(uint64_t n) noexcept {
   x ^= x >> 31;
   x *= 0xBF58476D1CE4E5B9ull;
   x ^= x >> 27;
+  // Rounded through float on purpose: the test WAVs (and the baselines measured with them) were
+  // made from float noise; test_mix_test pins the samples.
   return static_cast<float>(static_cast<double>(x >> 40) / static_cast<double>(1ull << 23) - 1.0);
 }
 

@@ -8,6 +8,7 @@
 #include "corec_internal.h"
 
 #include <memory>
+#include <utility>
 
 #if !__has_feature(objc_arc)
 #error "Sources/CoreC is compiled with ARC (-fobjc-arc) in every build"

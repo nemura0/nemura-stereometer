@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 #include <vector>
 
 namespace {
@@ -61,4 +63,21 @@ TEST_CASE("test mix: skip moves on as if the frames were read") {
   read.fill(a.data(), 100);
   skipped.fill(b.data(), 100);
   CHECK(a == b);
+}
+
+// The test WAVs and every baseline measured with them come from these samples: a change to the
+// mix (even rounding) must be deliberate. The hash is of the float bit patterns, the same on
+// arm64 and x86_64.
+TEST_CASE("test mix: the samples are the ones the test WAVs were made from") {
+  const std::vector<float> samples = mix(48000, 20 * 48000, 4096);
+  uint64_t hash = 0xcbf29ce484222325ull;  // FNV-1a
+  for (const float sample : samples) {
+    uint32_t bits = 0;
+    std::memcpy(&bits, &sample, sizeof bits);
+    for (int byte = 0; byte < 4; ++byte) {
+      hash ^= (bits >> (8 * byte)) & 0xFF;
+      hash *= 0x100000001b3ull;
+    }
+  }
+  CHECK(hash == 0x3def96dd0918e02cull);
 }

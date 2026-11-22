@@ -106,8 +106,9 @@ bool parse(int argc, char** argv, Options& o) {
     else if (key == "--dbfs") o.dbfs = value;
     else return false;
   }
+  // The WAV header holds the size in 32 bits: 8 bytes a frame.
   return (o.kind == "tone" || o.kind == "mix") && o.seconds > 0 && o.rate >= 8000 &&
-         o.rate <= 384000;
+         o.rate <= 384000 && o.seconds * o.rate * 8 < 4.0e9;
 }
 
 }  // namespace

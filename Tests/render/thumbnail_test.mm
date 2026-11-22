@@ -7,6 +7,7 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <vector>
 
@@ -81,10 +82,34 @@ TEST_CASE("thumbnail: refuses sizes it cannot draw") {
     return;
   }
   ThumbnailRenderer renderer(device);
-  std::vector<uint8_t> bgra(4);
+  const std::vector<uint8_t> untouched(4, 0xAB);
+  std::vector<uint8_t> bgra = untouched;
   CHECK_FALSE(renderer.render(white(), 0, 1, 1, bgra.data()));
   CHECK_FALSE(renderer.render(white(), 1, 0, 1, bgra.data()));
   CHECK_FALSE(renderer.render(white(), ThumbnailRenderer::kMaxSide + 1, 1, 1, bgra.data()));
   CHECK_FALSE(renderer.render(white(), 1, 1, 0, bgra.data()));
+  CHECK_FALSE(renderer.render(white(), 1, 1, -1, bgra.data()));
+  CHECK_FALSE(renderer.render(white(), 1, 1, NAN, bgra.data()));
+  CHECK_FALSE(renderer.render(white(), 1, 1, INFINITY, bgra.data()));
+  CHECK_FALSE(renderer.render(white(), 1, 1, ThumbnailRenderer::kMaxScale * 2, bgra.data()));
+  CHECK(bgra == untouched);
   CHECK_FALSE(renderer.render(white(), 1, 1, 1, nullptr));
+}
+
+TEST_CASE("thumbnail: a fresh renderer draws the same pixels, glow and readouts included") {
+  id<MTLDevice> device = MTLCreateSystemDefaultDevice();
+  if (device == nil) {
+    MESSAGE("no Metal device: skipped");
+    return;
+  }
+  MeterSettings settings = white();
+  settings.glow = 0.5f;
+  settings.correlation = true;
+  settings.balance = true;
+  std::vector<uint8_t> first(kSide * kSide * 4), again(first.size());
+  ThumbnailRenderer one(device);
+  ThumbnailRenderer other(device);
+  REQUIRE(one.render(settings, kSide, kSide, 2, first.data()));
+  REQUIRE(other.render(settings, kSide, kSide, 2, again.data()));
+  CHECK(first == again);
 }

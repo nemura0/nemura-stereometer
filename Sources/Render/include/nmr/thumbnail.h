@@ -9,13 +9,13 @@
 #include <nmr/meter_scene.h>
 
 #include <cstdint>
-#include <memory>
 
 namespace nmr {
 
 class ThumbnailRenderer {
  public:
   static constexpr uint32_t kMaxSide = 1024;  // pixels
+  static constexpr float kMaxScale = 8;       // pixels per point
   static constexpr double kSampleRate = 48000;
   static constexpr double kStartS = 2.4;   // where the mix plays correlated, before the kick
   static constexpr double kSettleS = 0.6;  // drawn before the shown frame
@@ -28,9 +28,10 @@ class ThumbnailRenderer {
   [[nodiscard]] bool ready() const noexcept { return queue_ != nil; }
 
   // Draws `settings` at width × height pixels (`scale`: pixels per point) and copies the last
-  // frame into `bgra`: width × height × 4 bytes, premultiplied BGRA, top row first. Always the
-  // same pixels for the same arguments. False when nothing was drawn (a size of 0 or over
-  // kMaxSide, a scale that is not positive, a NULL `bgra`, or no GPU resources).
+  // frame into `bgra`: width × height × 4 bytes, premultiplied BGRA, top row first. The same
+  // pixels for the same arguments on one machine (GPUs may round differently: keep no pixel
+  // goldens). False, writing nothing, when a frame was not drawn (a size of 0 or over kMaxSide,
+  // a scale that is not in (0, kMaxScale], a NULL `bgra`, or a GPU failure).
   bool render(const MeterSettings& settings, uint32_t width, uint32_t height, float scale,
               uint8_t* bgra);
 

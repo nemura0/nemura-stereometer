@@ -93,4 +93,17 @@ struct MeterMenuTests {
     #expect(MenuBarIcon.image.size == NSSize(width: 18, height: 18))
     #expect(MenuBarIcon.image.accessibilityDescription?.isEmpty == false)
   }
+
+  @Test("Thumbnails are drawn at least as large as their tiles")
+  func thumbnailsFillTheirTiles() {
+    #expect(Double(MeterMenuView.thumbnailSide) >= MeterMenuView.tileSide)
+    #expect(Double(MeterMenuView.thumbnailSide) < MeterMenuView.tileSide + 2)
+  }
+
+  @Test("The click-through shortcut reads as the hotkey it is")
+  func shortcutText() {
+    #expect(HotKeys.Action.toggleClickThrough.shortcut == "⌃⌥⌘S")
+    #expect(MeterMenuModel(store: SettingsStore(defaults: nil), presetFolder: nil)
+      .clickThroughShortcut == HotKeys.Action.toggleClickThrough.shortcut)
+  }
 }

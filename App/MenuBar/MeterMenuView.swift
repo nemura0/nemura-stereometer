@@ -6,8 +6,14 @@ import SwiftUI
 /// meter's renderer, the preset, the background opacity and click-through, and Settings.
 struct MeterMenuView: View {
   static let width: CGFloat = 316
-  static let thumbnailSide = 76
-  static let iris = Color(red: 0x89 / 255, green: 0x93 / 255, blue: 0xFF / 255)
+  static let padding: CGFloat = 16
+  static let columns = 3
+  static let columnSpacing: CGFloat = 8
+  /// A mode tile's width, in points.
+  static let tileSide = Double(
+    (width - 2 * padding - CGFloat(columns - 1) * columnSpacing) / CGFloat(columns))
+  /// Drawn at least as large as the tile, so it is never scaled up.
+  static let thumbnailSide = Int(tileSide.rounded(.up))
 
   @Bindable var model: MeterMenuModel
   let thumbnails: ModeThumbnails
@@ -26,9 +32,9 @@ struct MeterMenuView: View {
       Divider()
       footer
     }
-    .padding(16)
+    .padding(Self.padding)
     .frame(width: Self.width)
-    .tint(Self.iris)
+    .tint(Palette.iris)
     .environment(\.colorScheme, .dark)
     .onAppear(perform: refreshThumbnails)
     .onChange(of: model.store.values) { refreshThumbnails() }
@@ -71,7 +77,9 @@ struct MeterMenuView: View {
 
   private var modes: some View {
     LazyVGrid(
-      columns: Array(repeating: GridItem(.flexible(), spacing: 8, alignment: .top), count: 3),
+      columns: Array(
+        repeating: GridItem(.flexible(), spacing: Self.columnSpacing, alignment: .top),
+        count: Self.columns),
       spacing: 10
     )
     {
@@ -101,18 +109,19 @@ struct MeterMenuView: View {
     .menuStyle(.borderlessButton)
     .fixedSize()
     .accessibilityLabel("Preset")
+    .accessibilityValue(model.presetTitle)
   }
 
   private var opacity: some View {
     HStack(spacing: 10) {
-      Slider(value: $model.opacity, in: 0...100) { Text("Opacity") }
+      Slider(value: $model.opacity, in: 0...100) { Text("Background opacity") }
         .labelsHidden()
+        .accessibilityValue("\(Int(model.opacity.rounded())) %")
       Text("\(Int(model.opacity.rounded())) %")
         .font(.callout.monospacedDigit())
         .frame(width: 44, alignment: .trailing)
+        .accessibilityHidden(true)
     }
-    .accessibilityElement(children: .contain)
-    .accessibilityLabel("Background opacity")
   }
 
   private var clickThrough: some View {
@@ -165,7 +174,7 @@ private struct ModeTile: View {
         .overlay(
           RoundedRectangle(cornerRadius: 7)
             .strokeBorder(
-              selected ? MeterMenuView.iris : Color.white.opacity(0.08),
+              selected ? Palette.iris : Color.white.opacity(0.08),
               lineWidth: selected ? 2 : 1))
         Text(label).font(.caption2).lineLimit(1).minimumScaleFactor(0.8)
           .foregroundStyle(selected ? .primary : .secondary)

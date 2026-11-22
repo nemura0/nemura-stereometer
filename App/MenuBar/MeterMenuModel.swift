@@ -16,7 +16,7 @@ final class MeterMenuModel {
   private(set) var userPresets: [Preset] = []
   var capture = CaptureState()
   /// Click-through's global shortcut; nil when another app holds it.
-  var clickThroughShortcut: String? = "⌃⌥⌘S"
+  var clickThroughShortcut: String? = HotKeys.Action.toggleClickThrough.shortcut
   @ObservationIgnored private let presetFolder: URL?
 
   init(store: SettingsStore, presetFolder: URL? = Presets.directory) {
@@ -31,7 +31,7 @@ final class MeterMenuModel {
       userPresets = []
       return
     }
-    userPresets = Presets.list(in: presetFolder).compactMap { Presets.load($0.url).preset }
+    userPresets = Presets.loadAll(in: presetFolder).map(\.preset)
   }
 
   var mode: MeterMode {

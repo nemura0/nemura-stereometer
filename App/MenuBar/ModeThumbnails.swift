@@ -4,7 +4,8 @@ import Observation
 import os
 
 /// The mode picker's pictures for the current look, drawn on a background queue (Thumbnails).
-/// A look that changes while drawing is drawn again once the current set is done.
+/// Only the latest look asked for is drawn next: one that changes while a set is drawing is
+/// drawn once that set is done, unless it changed back to the set being drawn.
 @MainActor
 @Observable
 final class ModeThumbnails {
@@ -13,49 +14,57 @@ final class ModeThumbnails {
   @ObservationIgnored private let renderer = Thumbnails()
   @ObservationIgnored private let queue = DispatchQueue(
     label: "thumbnails", qos: .userInitiated)
-  @ObservationIgnored private var drawn: SettingValues?  // the look `images` show
+  /// The look `images` show.
+  @ObservationIgnored private(set) var shown: SettingValues?
   @ObservationIgnored private var drawing: SettingValues?
-  @ObservationIgnored private var next: (look: SettingValues, side: Int, scale: Double)?
+  @ObservationIgnored private var wanted: Request?
   @ObservationIgnored private static let log = Logger(
     subsystem: Bundle.main.bundleIdentifier ?? "app", category: "thumbnails")
 
+  private struct Request {
+    let look: SettingValues
+    let side: Int
+    let scale: Double
+  }
+
+  init() {
+    if renderer == nil { Self.log.error("no Metal device: the modes have no thumbnails") }
+  }
+
+  var isDrawing: Bool { drawing != nil }
+
   /// Draws every mode in `values`' look, `side` points square, unless they show it already.
   func refresh(for values: SettingValues, side: Int, scale: Double) {
-    let look = Thumbnails.look(values, mode: .goniometer)
-    guard look != drawn, look != drawing else { return }
-    guard drawing == nil else {
-      next = (look, side, scale)
-      return
-    }
-    guard let renderer else {
-      Self.log.error("no Metal device: the modes have no thumbnails")
-      return
-    }
-    drawing = look
+    wanted = Request(look: Thumbnails.look(values, mode: .goniometer), side: side, scale: scale)
+    drawWanted()
+  }
+
+  private func drawWanted() {
+    guard drawing == nil, let request = wanted, let renderer else { return }
+    wanted = nil
+    guard request.look != shown else { return }
+    drawing = request.look
     queue.async { [weak self] in
       var images: [MeterMode: CGImage] = [:]
       for mode in MeterMode.allCases {
-        let modeLook = Thumbnails.look(look, mode: mode)
-        images[mode] = renderer.image(of: modeLook, side: side, scale: scale)
+        let modeLook = Thumbnails.look(request.look, mode: mode)
+        images[mode] = renderer.image(of: modeLook, side: request.side, scale: request.scale)
       }
       let result = DrawnImages(images: images)
       DispatchQueue.main.async {
-        MainActor.assumeIsolated { self?.finished(look, result) }
+        MainActor.assumeIsolated { self?.finished(request.look, result) }
       }
     }
   }
 
   private func finished(_ look: SettingValues, _ result: DrawnImages) {
     drawing = nil
-    drawn = look
+    shown = look
     if result.images.count < MeterMode.allCases.count {
       Self.log.error("some mode thumbnails could not be drawn")
     }
     images = result.images
-    if let next {
-      self.next = nil
-      refresh(for: next.look, side: next.side, scale: next.scale)
-    }
+    drawWanted()
   }
 }
 

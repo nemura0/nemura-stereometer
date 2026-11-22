@@ -45,11 +45,17 @@ final class Thumbnails: @unchecked Sendable {  // one thread at a time, as docum
   }
 
   /// What a mode's thumbnail draws: the current look in `mode`, without the meters and readouts
-  /// (too small to read at thumbnail size).
+  /// (too small to read at thumbnail size). Settings that change no pixels (the window's
+  /// behavior, the frame rate) are left at their defaults, so changing them draws nothing again.
   static func look(_ settings: SettingValues, mode: MeterMode) -> SettingValues {
     var look = settings
     look.set(.mode, choice: mode.rawValue)
     for key in [SettingKey.correlationMeter, .balanceMeter, .meterReadouts] { look.set(key, to: 0) }
+    for key in unseen { look.reset(key) }
     return look
   }
+
+  private static let unseen: [SettingKey] = [
+    .alwaysOnTop, .clickThrough, .allSpaces, .hoverControls, .dockIcon, .frameRate,
+  ]
 }

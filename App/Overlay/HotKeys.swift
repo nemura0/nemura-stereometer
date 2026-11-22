@@ -21,6 +21,9 @@ final class HotKeys {
     }
 
     /// For menus: the shortcut as it appears there.
+    /// How menus write it: "⌃⌥⌘S".
+    var shortcut: String { "⌃⌥⌘" + keyEquivalent.uppercased() }
+
     var keyEquivalent: String {
       switch self {
       case .toggleClickThrough: "s"

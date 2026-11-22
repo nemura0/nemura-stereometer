@@ -1,5 +1,6 @@
 import Foundation
 import NMRCoreC
+import os
 
 /// A named look: of its settings, only the entries presets store matter. Saving drops control
 /// characters from the name, NUL included.
@@ -24,6 +25,20 @@ enum Presets {
   static func list(in folder: URL) -> [UserFile] {
     UserFile.adopt(nmr_presets_list(folder.cPath))
   }
+
+  /// The presets in `folder` that load, with their files; the others are logged and left out.
+  static func loadAll(in folder: URL) -> [(preset: Preset, file: URL)] {
+    list(in: folder).compactMap { file in
+      guard let preset = load(file.url).preset else {
+        log.error("preset file not read: \(file.name, privacy: .public)")
+        return nil
+      }
+      return (preset, file.url)
+    }
+  }
+
+  private static let log = Logger(
+    subsystem: Bundle.main.bundleIdentifier ?? "app", category: "presets")
 
   /// The preset in `file`, named after the file, and what decoding it found; no preset when the
   /// file could not be read (see `report.status`).

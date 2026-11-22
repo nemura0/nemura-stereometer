@@ -50,4 +50,39 @@ struct ThumbnailTests {
     #expect(renderer.image(of: SettingValues(), side: 40, scale: 0) == nil)
     #expect(renderer.image(of: SettingValues(), side: 2000, scale: 1) == nil)
   }
+
+  @Test("Settings that change no pixels give the same thumbnail look")
+  func windowSettingsLeaveTheLook() {
+    var changed = SettingValues()
+    for key in [SettingKey.clickThrough, .alwaysOnTop, .allSpaces, .hoverControls, .dockIcon] {
+      changed.set(key, to: changed.flag(key) ? 0 : 1)
+    }
+    changed.set(.frameRate, choice: "30")
+    #expect(Thumbnails.look(changed, mode: .goniometer)
+      == Thumbnails.look(SettingValues(), mode: .goniometer))
+  }
+
+  @Test("A look changed and changed back while drawing ends with the current look shown")
+  @MainActor
+  func latestLookWins() async throws {
+    guard Thumbnails() != nil else { return }
+    let thumbnails = ModeThumbnails()
+    let first = SettingValues()
+    var second = first
+    second.set(.glow, to: 60)
+    thumbnails.refresh(for: first, side: 24, scale: 1)
+    try await settle(thumbnails)
+    thumbnails.refresh(for: second, side: 24, scale: 1)  // drawing now
+    thumbnails.refresh(for: first, side: 24, scale: 1)   // and back, before it is done
+    try await settle(thumbnails)
+    #expect(thumbnails.shown == Thumbnails.look(first, mode: .goniometer))
+  }
+
+  @MainActor
+  private func settle(_ thumbnails: ModeThumbnails) async throws {
+    for _ in 0..<400 where thumbnails.isDrawing {
+      try await Task.sleep(for: .milliseconds(25))
+    }
+    #expect(!thumbnails.isDrawing)
+  }
 }

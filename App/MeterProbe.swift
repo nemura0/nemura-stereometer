@@ -103,7 +103,7 @@ struct MeterProbe: Sendable {
       overlay.menuNeedsUpdate(overlay.quickMenu)
       menu = overlay.quickMenu.items.filter { !$0.isSeparatorItem }.map(\.title)
       hotKeys = HotKeys.Action.allCases.filter { overlay.registeredHotKeys.contains($0) }
-        .map { "⌃⌥⌘" + $0.keyEquivalent.uppercased() }
+        .map(\.shortcut)
 
       let frame = window.frame
       var resized = NSRect.zero
