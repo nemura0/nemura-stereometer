@@ -76,4 +76,16 @@ target_add_auv2_wrapper(
   INSTRUMENT_TYPE "${NMR_AU_TYPE}"
   CLAP_TARGET_FOR_CONFIG nmr_plugin_clap)
 
-add_custom_target(nmr_plugins ALL DEPENDS nmr_plugin_clap nmr_plugin_vst3 nmr_plugin_auv2)
+# clap-wrapper copies its generated Info.plist (with AudioComponents) into the bundle PRE_BUILD,
+# that is only when the AU relinks; a CMake reconfigure under Ninja rewrites the bundle's
+# Info.plist with CMake's default (BNDL code APPL, no AudioComponents), which then stays until the
+# next relink and the AU is not registered. Copy the generated one on every build.
+add_custom_target(nmr_plugin_auv2_plist ALL
+  COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+    "${CMAKE_CURRENT_BINARY_DIR}/nmr_plugin_auv2-build-helper-output/auv2_Info.plist"
+    "$<TARGET_FILE_DIR:nmr_plugin_auv2>/../Info.plist"
+  DEPENDS nmr_plugin_auv2
+  VERBATIM)
+
+add_custom_target(nmr_plugins ALL
+  DEPENDS nmr_plugin_clap nmr_plugin_vst3 nmr_plugin_auv2 nmr_plugin_auv2_plist)
