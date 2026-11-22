@@ -1,0 +1,312 @@
+#import <nmr/meter_renderer.h>
+
+#include <nmr/shader_library.h>
+
+#include <os/log.h>
+#include <simd/simd.h>
+
+#include <algorithm>
+#include <cmath>
+
+namespace nmr {
+
+namespace {
+
+// Mirrors of the MSL structs in meter_shaders.mm.
+struct ScopeUniforms {
+  simd_float4 solid_color;
+  simd_float2 target_size;
+  float full_scale;
+  float size_px;
+  float intensity;
+  float map_low;
+  float map_high;
+  uint32_t density;
+  uint32_t count;
+  uint32_t shape;
+  uint32_t solid;
+  uint32_t pad;
+};
+static_assert(sizeof(ScopeUniforms) == 64);
+
+struct CompositeUniforms {
+  simd_float4 scope_rect;
+  simd_float2 target_size;
+  float full_scale;
+  float tone_gain;
+  float whiten;
+  float guide_px;
+  simd_float2 pad;
+};
+static_assert(sizeof(CompositeUniforms) == 48);
+
+struct GpuSegment {
+  simd_float2 a;
+  simd_float2 b;
+  simd_float4 color;
+};
+static_assert(sizeof(GpuSegment) == 32);
+
+struct GpuRect {
+  simd_float4 rect;
+  simd_float4 color;
+};
+static_assert(sizeof(GpuRect) == 32);
+
+// One slot of per-frame data: the points (the previous frame's last first), the guides, the
+// meter rects. Buffer offsets are 256-byte aligned, as macOS asks of buffers on any GPU.
+constexpr size_t kOffsetAlignment = 256;
+constexpr size_t aligned(size_t bytes) {
+  return (bytes + kOffsetAlignment - 1) / kOffsetAlignment * kOffsetAlignment;
+}
+constexpr size_t kPointsBytes = (MeterRenderer::kMaxPoints + 1) * sizeof(simd_float4);
+constexpr size_t kSegmentsOffset = aligned(kPointsBytes);
+constexpr size_t kRectsOffset =
+    aligned(kSegmentsOffset + Guides::kMaxSegments * sizeof(GpuSegment));
+constexpr size_t kSlotBytes = kRectsOffset + MeterBars::kMaxRects * sizeof(GpuRect);
+constexpr uint32_t kAllSlots = (1u << MeterRenderer::kFramesInFlight) - 1;
+
+constexpr MTLPixelFormat kLightFormat = MTLPixelFormatRGBA16Float;
+
+simd_float4 simdOf(const Premultiplied& c) { return simd_make_float4(c[0], c[1], c[2], c[3]); }
+
+using Configure = void (^)(MTLRenderPipelineDescriptor*);
+
+Configure blended(MTLPixelFormat format, MTLBlendFactor source, MTLBlendFactor destination,
+                  MTLBlendOperation operation = MTLBlendOperationAdd) {
+  return ^(MTLRenderPipelineDescriptor* d) {
+    MTLRenderPipelineColorAttachmentDescriptor* color = d.colorAttachments[0];
+    color.pixelFormat = format;
+    color.blendingEnabled = YES;
+    color.rgbBlendOperation = operation;
+    color.alphaBlendOperation = operation;
+    color.sourceRGBBlendFactor = source;
+    color.sourceAlphaBlendFactor = source;
+    color.destinationRGBBlendFactor = destination;
+    color.destinationAlphaBlendFactor = destination;
+  };
+}
+
+}  // namespace
+
+MeterRenderer::MeterRenderer(id<MTLDevice> device, MTLPixelFormat target_format)
+    : device_(device),
+      target_format_(target_format),
+      free_slots_(std::make_shared<std::atomic<uint32_t>>(kAllSlots)) {
+  if (device == nil) return;
+  NSString* target = [NSString stringWithFormat:@"%lu", static_cast<unsigned long>(target_format)];
+  const auto pipeline = [&](NSString* name, NSString* vertex, NSString* fragment,
+                            Configure configure) {
+    return sharedRenderPipeline(device, [@"meter/" stringByAppendingString:name], vertex,
+                                fragment, configure);
+  };
+  constexpr MTLBlendFactor kOne = MTLBlendFactorOne;
+  decay_ = pipeline(@"decay", @"fullscreen_vertex", @"decay_fragment",
+                    blended(kLightFormat, MTLBlendFactorZero, MTLBlendFactorBlendColor));
+  dots_ = pipeline(@"dots", @"dot_vertex", @"dot_fragment", blended(kLightFormat, kOne, kOne));
+  trace_ = pipeline(@"trace", @"trace_vertex", @"segment_fragment",
+                    blended(kLightFormat, kOne, kOne));
+  const MTLBlendFactor over = MTLBlendFactorOneMinusSourceAlpha;
+  image_ = pipeline([@"image/" stringByAppendingString:target], @"image_vertex",
+                    @"image_fragment", blended(target_format, kOne, over));
+  // Max, not over: where guide segments overlap (their joints) they are not drawn twice.
+  guides_ = pipeline([@"guides/" stringByAppendingString:target], @"guide_vertex",
+                     @"segment_fragment",
+                     blended(target_format, kOne, kOne, MTLBlendOperationMax));
+  rects_ = pipeline([@"rects/" stringByAppendingString:target], @"rect_vertex", @"rect_fragment",
+                    blended(target_format, kOne, over));
+  bool buffers = true;
+  for (auto& buffer : buffers_) {
+    buffer = [device newBufferWithLength:kSlotBytes options:MTLResourceStorageModeShared];
+    buffers = buffers && buffer != nil;
+  }
+  ready_ = buffers && decay_ != nil && dots_ != nil && trace_ != nil && image_ != nil &&
+           guides_ != nil && rects_ != nil;
+  if (!ready_) os_log_error(OS_LOG_DEFAULT, "nmr: the meter renderer could not be set up");
+  const colormap::Builtin* iris = colormap::findBuiltin(colormap::kDefaultKey);
+  if (iris != nullptr) colormap_ = colormap::table(iris->stops);
+}
+
+void MeterRenderer::setColormap(const colormap::Table& table) noexcept { colormap_ = table; }
+
+void MeterRenderer::ensureScope(uint32_t width, uint32_t height) {
+  if (scope_ != nil && scope_.width == width && scope_.height == height) return;
+  MTLTextureDescriptor* d = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:kLightFormat
+                                                                               width:width
+                                                                              height:height
+                                                                           mipmapped:NO];
+  d.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+  d.storageMode = MTLStorageModePrivate;
+  scope_ = [device_ newTextureWithDescriptor:d];
+  scope_clear_ = true;
+}
+
+bool MeterRenderer::encode(id<MTLCommandBuffer> commands, id<MTLTexture> target,
+                           const MeterFrame& frame, float scale) {
+  pending_clear_ = pending_clear_ || frame.clear;
+  if (!ready_ || commands == nil || target == nil || target.pixelFormat != target_format_) {
+    return false;
+  }
+  // Take a free slot; the frame's completion hands it back.
+  uint32_t free = free_slots_->load(std::memory_order_acquire);
+  uint32_t index = 0;
+  for (;;) {
+    if (free == 0) return false;  // kFramesInFlight frames are still on the GPU: skip this one
+    index = static_cast<uint32_t>(__builtin_ctz(free));
+    if (free_slots_->compare_exchange_weak(free, free & ~(1u << index),
+                                           std::memory_order_acq_rel)) {
+      break;
+    }
+  }
+  std::shared_ptr<std::atomic<uint32_t>> slots = free_slots_;
+  [commands addCompletedHandler:^(id<MTLCommandBuffer>) {
+    slots->fetch_or(1u << index, std::memory_order_release);
+  }];
+  id<MTLBuffer> slot = buffers_[index];
+
+  // The scope in whole pixels, so the light texture maps 1:1 onto the target.
+  const Rect& s = frame.layout.scope;
+  const float x = std::round(s.x);
+  const float y = std::round(s.y);
+  scope_rect_ = {x, y, std::round(s.x + s.width) - x, std::round(s.y + s.height) - y};
+  if (scope_rect_.width >= 1 && scope_rect_.height >= 1) {
+    ensureScope(static_cast<uint32_t>(scope_rect_.width),
+                static_cast<uint32_t>(scope_rect_.height));
+    encodeScope(commands, slot, frame);
+  }
+  encodeComposite(commands, target, slot, frame, std::isfinite(scale) && scale > 0 ? scale : 1);
+  return true;
+}
+
+void MeterRenderer::encodeScope(id<MTLCommandBuffer> commands, id<MTLBuffer> slot,
+                                const MeterFrame& frame) {
+  const bool clear = pending_clear_ || scope_clear_;
+  scope_clear_ = false;
+  // Points: the previous frame's last sample, then the newest kMaxPoints of this frame's (not
+  // joined across the ones left out).
+  const size_t available = std::min(frame.points.size(), size_t{kMaxPoints});
+  const size_t skipped = frame.points.size() - available;
+  if (pending_clear_ || skipped > 0) has_previous_ = false;
+  pending_clear_ = false;
+  auto* points = static_cast<simd_float4*>(slot.contents);
+  for (size_t i = 0; i < available; ++i) {
+    const dsp::Point& p = frame.points[skipped + i];
+    const size_t c = skipped + i;
+    const float t = c < frame.colors.size() ? frame.colors[c] : 0.0f;
+    points[i + 1] = simd_make_float4(p.x, p.y, t, 0);
+  }
+  if (available > 0) {
+    points[0] = has_previous_ ? simd_make_float4(previous_.x, previous_.y, previous_color_, 0)
+                              : points[1];
+    previous_ = {points[available].x, points[available].y};
+    previous_color_ = points[available].z;
+    has_previous_ = true;
+  }
+
+  MTLRenderPassDescriptor* pass = [MTLRenderPassDescriptor renderPassDescriptor];
+  pass.colorAttachments[0].texture = scope_;
+  pass.colorAttachments[0].loadAction = clear ? MTLLoadActionClear : MTLLoadActionLoad;
+  pass.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 0);
+  pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+  id<MTLRenderCommandEncoder> encoder = [commands renderCommandEncoderWithDescriptor:pass];
+  const float decay = std::clamp(frame.style.decay, 0.0f, 1.0f);
+  if (!clear && decay < 1) {
+    [encoder setRenderPipelineState:decay_];
+    [encoder setBlendColorRed:decay green:decay blue:decay alpha:decay];
+    [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+  }
+  if (available > 0 && frame.style.intensity > 0) {
+    ScopeUniforms u{};
+    const std::array<float, 3>& solid = frame.look.solid_color;
+    u.solid_color = simd_make_float4(solid[0], solid[1], solid[2], 1);
+    u.target_size = simd_make_float2(scope_rect_.width, scope_rect_.height);
+    u.full_scale = kFullScale;
+    u.size_px = frame.style.size_px;
+    u.intensity = frame.style.intensity;
+    u.map_low = frame.look.map_low;
+    u.map_high = frame.look.map_high;
+    u.density = std::clamp(frame.style.density, 1u, 8u);
+    u.count = static_cast<uint32_t>(available);
+    u.shape = static_cast<uint32_t>(frame.shape);
+    u.solid = frame.look.solid ? 1 : 0;
+    const bool lines = frame.draw == DrawStyle::kLines;
+    [encoder setRenderPipelineState:lines ? trace_ : dots_];
+    [encoder setVertexBuffer:slot offset:0 atIndex:0];
+    [encoder setVertexBytes:&u length:sizeof(u) atIndex:1];
+    [encoder setFragmentBytes:&u length:sizeof(u) atIndex:1];
+    [encoder setVertexBytes:colormap_.data() length:sizeof(colormap_) atIndex:2];
+    const NSUInteger instances = lines ? u.count : u.count * u.density;
+    [encoder drawPrimitives:MTLPrimitiveTypeTriangleStrip
+                vertexStart:0
+                vertexCount:4
+              instanceCount:instances];
+  }
+  [encoder endEncoding];
+}
+
+void MeterRenderer::encodeComposite(id<MTLCommandBuffer> commands, id<MTLTexture> target,
+                                    id<MTLBuffer> slot, const MeterFrame& frame, float scale) {
+  const Premultiplied& bg = frame.look.background;
+  MTLRenderPassDescriptor* pass = [MTLRenderPassDescriptor renderPassDescriptor];
+  pass.colorAttachments[0].texture = target;
+  pass.colorAttachments[0].loadAction = MTLLoadActionClear;
+  pass.colorAttachments[0].clearColor = MTLClearColorMake(bg[0], bg[1], bg[2], bg[3]);
+  pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+  id<MTLRenderCommandEncoder> encoder = [commands renderCommandEncoderWithDescriptor:pass];
+
+  CompositeUniforms u{};
+  u.scope_rect = simd_make_float4(scope_rect_.x, scope_rect_.y, scope_rect_.width,
+                                  scope_rect_.height);
+  u.target_size = simd_make_float2(target.width, target.height);
+  u.full_scale = kFullScale;
+  u.tone_gain = kToneGain;
+  u.whiten = kWhiten;
+  u.guide_px = kGuidePt * scale;
+  [encoder setVertexBytes:&u length:sizeof(u) atIndex:1];
+  [encoder setFragmentBytes:&u length:sizeof(u) atIndex:1];
+  const bool has_scope = scope_rect_.width >= 1 && scope_rect_.height >= 1;
+
+  uint32_t segments = 0;
+  if (frame.guides != nullptr && has_scope) {
+    auto* out = reinterpret_cast<GpuSegment*>(static_cast<uint8_t*>(slot.contents) +
+                                              kSegmentsOffset);
+    segments = std::min(frame.guides->count, Guides::kMaxSegments);
+    for (uint32_t i = 0; i < segments; ++i) {
+      const GuideSegment& g = frame.guides->segments[i];
+      out[i] = {simd_make_float2(g.a.x, g.a.y), simd_make_float2(g.b.x, g.b.y),
+                simdOf(g.strong ? frame.look.guide_strong : frame.look.guide_weak)};
+    }
+  }
+  if (segments > 0) {
+    [encoder setRenderPipelineState:guides_];
+    [encoder setVertexBuffer:slot offset:kSegmentsOffset atIndex:0];
+    [encoder drawPrimitives:MTLPrimitiveTypeTriangleStrip
+                vertexStart:0
+                vertexCount:4
+              instanceCount:segments];
+  }
+  if (has_scope) {
+    [encoder setRenderPipelineState:image_];
+    [encoder setFragmentTexture:scope_ atIndex:0];
+    [encoder drawPrimitives:MTLPrimitiveTypeTriangleStrip vertexStart:0 vertexCount:4];
+  }
+
+  const MeterBars bars = meterBars(frame.layout, frame.correlation, frame.balance,
+                                   frame.correlation_history, frame.look.meters);
+  if (bars.count > 0) {
+    auto* out = reinterpret_cast<GpuRect*>(static_cast<uint8_t*>(slot.contents) + kRectsOffset);
+    for (uint32_t i = 0; i < bars.count; ++i) {
+      const Rect& r = bars.rects[i].rect;
+      out[i] = {simd_make_float4(r.x, r.y, r.width, r.height), simdOf(bars.rects[i].color)};
+    }
+    [encoder setRenderPipelineState:rects_];
+    [encoder setVertexBuffer:slot offset:kRectsOffset atIndex:0];
+    [encoder drawPrimitives:MTLPrimitiveTypeTriangleStrip
+                vertexStart:0
+                vertexCount:4
+              instanceCount:bars.count];
+  }
+  [encoder endEncoding];
+}
+
+}  // namespace nmr

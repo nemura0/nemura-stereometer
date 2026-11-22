@@ -11,8 +11,10 @@
 
 namespace nmr {
 
-// The embedded MSL source for every pipeline (Sources/Render/shader_source.mm).
+// The embedded MSL source: shaderSource() (Sources/Render/shader_source.mm) followed by
+// meterShaderSource() (meter_shaders.mm), compiled as one library.
 const char* shaderSource() noexcept;
+const char* meterShaderSource() noexcept;
 
 // Thread-safe. Returns nil (and logs) if compilation failed.
 id<MTLLibrary> sharedShaderLibrary(id<MTLDevice> device);

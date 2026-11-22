@@ -33,7 +33,8 @@ id<MTLLibrary> compileLocked(id<MTLDevice> device) {
   // Pin the language version so newer OS compilers cannot change behavior (macOS 14 baseline).
   options.languageVersion = MTLLanguageVersion3_1;
   NSError* error = nil;
-  NSString* source = [NSString stringWithUTF8String:shaderSource()];
+  NSString* source = [[NSString stringWithUTF8String:shaderSource()]
+      stringByAppendingString:[NSString stringWithUTF8String:meterShaderSource()]];
   id<MTLLibrary> library = [device newLibraryWithSource:source options:options error:&error];
   if (library == nil) {
     os_log_error(OS_LOG_DEFAULT, "nmr: shader compilation failed: %{public}@",
