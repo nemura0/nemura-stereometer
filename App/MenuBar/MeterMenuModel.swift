@@ -15,6 +15,17 @@ final class MeterMenuModel {
   let presets: [Preset] = Presets.factory
   private(set) var userPresets: [Preset] = []
   var capture = CaptureState()
+  /// The plugin instances sending now (PluginSources), for the source picker.
+  var instances: [PluginInstance] = []
+  /// What the meter shows.
+  var source: MeterSource = .systemOutput
+  /// How the chosen instance is doing, when `source` is one.
+  var instanceState: InstanceState = .waiting
+  /// `--feed`: the file offered as a source, and how it plays when chosen.
+  var feedFile: URL?
+  var fileState: FileState = .failed(.unreadable)
+  /// The user picked a source.
+  @ObservationIgnored var onChooseSource: ((MeterSource) -> Void)?
   /// Click-through's global shortcut; nil when another app holds it.
   var clickThroughShortcut: String? = HotKeys.Action.toggleClickThrough.shortcut
   @ObservationIgnored private let presetFolder: URL?
@@ -63,8 +74,51 @@ final class MeterMenuModel {
     set { store.update { $0.set(.clickThrough, to: newValue ? 1 : 0) } }
   }
 
-  /// One line about the system output capture.
+  func choose(_ source: MeterSource) {
+    onChooseSource?(source)
+  }
+
+  static let systemOutput = "System Output"
+
+  /// The source's name: "System Output" or the instance's.
+  var sourceTitle: String {
+    switch source {
+    case .systemOutput: Self.systemOutput
+    case .instance(let instance): title(for: instance)
+    case .file(let url): Self.fileTitle(url)
+    }
+  }
+
+  /// The instance's title in the picker: "Bass — Live", then "Bass — Live (2)" for a second
+  /// instance of that name in that app (in listing order); its own title when it is not listed.
+  func title(for instance: PluginInstance) -> String {
+    guard let index = instances.firstIndex(where: { $0.id == instance.id }) else {
+      return instance.title
+    }
+    let title = instances[index].title
+    let earlier = instances[..<index].filter { $0.title == title }.count
+    return earlier == 0 ? title : "\(title) (\(earlier + 1))"
+  }
+
+  static func fileTitle(_ url: URL) -> String { "File: \(url.lastPathComponent)" }
+
+  /// One line about the source: the capture's state, or the chosen instance's.
   var sourceStatus: String {
+    if case .file = source {
+      switch fileState {
+      case .playing(let rate): return Self.format(rate: rate) + ", looping"
+      case .failed(let problem): return problem.description
+      }
+    }
+    guard case .instance(let instance) = source else { return captureStatus }
+    switch instanceState {
+    case .waiting: return "Not sending"
+    case .quiet: return "Paused in the host"
+    case .sending: return Self.format(rate: instance.sampleRate, channels: instance.channels)
+    }
+  }
+
+  private var captureStatus: String {
     switch capture.phase {
     case .starting:
       return "Starting…"
@@ -72,11 +126,20 @@ final class MeterMenuModel {
       return "Not capturing (error \(status))"
     case .capturing(let rate, let channels):
       if capture.signal == .silenceWhilePlaying { return "Only silence arrives" }
-      // The app is in English: "44.1 kHz" whatever the region's decimal separator.
-      let kHz = (rate / 1000).formatted(
-        .number.precision(.fractionLength(0...1)).locale(Locale(identifier: "en_US_POSIX")))
-      let layout = channels == 1 ? "mono" : channels == 2 ? "stereo" : "\(channels) channels"
-      return "\(kHz) kHz, \(layout)"
+      return Self.format(rate: rate, channels: channels)
     }
+  }
+
+  /// "44.1 kHz, mono", in English whatever the region's decimal separator.
+  static func format(rate: Double, channels: Int) -> String {
+    let layout = channels == 1 ? "mono" : channels == 2 ? "stereo" : "\(channels) channels"
+    return "\(format(rate: rate)), \(layout)"
+  }
+
+  /// "44.1 kHz".
+  static func format(rate: Double) -> String {
+    let kHz = (rate / 1000).formatted(
+      .number.precision(.fractionLength(0...1)).locale(Locale(identifier: "en_US_POSIX")))
+    return "\(kHz) kHz"
   }
 }

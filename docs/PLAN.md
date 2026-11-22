@@ -81,7 +81,11 @@ Legend: `[x]` done and verified, `[~]` in progress / partially verified, `[ ]` n
       groups and Presets, rows generated from the schema (frame rate included), live on the
       meter; presets saved, imported, exported, deleted; `.map` colormaps imported. The look of
       the window and the popover on screen is for the owner to check
-- [ ] UI: source picker (System Output + live plugin instances), `--feed <wav>`
+- [x] Source picker in the popover: System Output, the live plugin instances (from the shm
+      registry, polled every 0.25 s) and, with `--feed <file.wav>`, the file played in a loop
+      with no capture. A chosen instance that stops stays chosen and says so. Checked by
+      `scripts/capture-probe.sh --instance` (a stand-in instance, `nmr_fake_instance`) and
+      `--feed`; real plugins send in Phase 4. The picker's look is for the owner to check
 
 ## Phase 4: plugin
 

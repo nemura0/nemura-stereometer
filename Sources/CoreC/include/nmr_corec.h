@@ -287,6 +287,74 @@ bool nmr_thumbnailer_render(nmr_thumbnailer* thumbnailer, const nmr_settings* se
                             const uint8_t* rgba, uint32_t width, uint32_t height, float scale,
                             uint8_t* bgra);
 
+// ---- Plugin instances -------------------------------------------------------------------------
+// The plugin instances sending to the app over shared memory (Sources/Core/include/nmr/
+// shm_transport.h), and one of them shown in a meter view (nmr/instance_source.h). Main thread.
+
+typedef struct nmr_sources nmr_sources;
+
+typedef struct nmr_source_info {
+  uint64_t instance_id;
+  double sample_rate;
+  uint32_t channels;
+  char name[64];  // UTF-8, NUL-terminated: the track or the name set in the plugin
+  char host[64];  // the process the instance runs in ("Live"), "" when unknown
+} nmr_source_info;
+
+// Maps the registry under `prefix` (NULL: the product's), creating it if needed. NULL when
+// shared memory is unavailable or holds another protocol version.
+nmr_sources* nmr_sources_open(const char* prefix);
+// Stops the app's heartbeat (plugins stop showing "connected") and unmaps. NULL is ignored.
+// Destroy every instance feed made from `sources` first.
+void nmr_sources_close(nmr_sources* sources);
+// Beats the app's heartbeat, frees slots whose process died, and lists the instances that sent
+// within the last second into `out` (at most `max`, in slot order). Returns how many it listed.
+// Call it every quarter second or so: plugins count the app as connected for a second.
+uint32_t nmr_sources_poll(nmr_sources* sources, nmr_source_info* out, uint32_t max);
+
+typedef enum nmr_instance_state {
+  NMR_INSTANCE_WAITING = 0,  // not sending (released, not activated yet); the view shows nothing
+  NMR_INSTANCE_SENDING = 1,
+  NMR_INSTANCE_QUIET = 2,    // still active but sent nothing for a second (the host stopped)
+} nmr_instance_state;
+
+typedef struct nmr_instance_feed nmr_instance_feed;
+
+// Shows instance `instance_id` in `view` (from nmr_render_view_create, outliving the feed),
+// replacing the view's source. NULL for a NULL argument or no memory.
+nmr_instance_feed* nmr_instance_feed_create(void* view, nmr_sources* sources,
+                                            uint64_t instance_id);
+// Follows the instance in the latest nmr_sources_poll list (to a new slot or sample rate, or
+// away), giving the view each new ring. Call it after each poll.
+nmr_instance_state nmr_instance_feed_update(nmr_instance_feed* feed);
+// The view stops reading the instance before it is unmapped. NULL is ignored.
+void nmr_instance_feed_destroy(nmr_instance_feed* feed);
+
+// ---- File feed --------------------------------------------------------------------------------
+// `--feed <file.wav>`: a WAV file played into a meter view in real time, looping, for
+// reproducible measurements (Sources/Core/include/nmr/file_player.h). Main thread.
+
+typedef enum nmr_feed_error {
+  NMR_FEED_OK = 0,
+  NMR_FEED_UNREADABLE,   // missing, not a regular file, or unreadable
+  NMR_FEED_NOT_WAV,
+  NMR_FEED_UNSUPPORTED,  // not PCM 16/24/32 or float 32/64, or an odd sample rate
+  NMR_FEED_EMPTY,
+  NMR_FEED_TOO_LONG,     // over 2 GiB of file or about 46 minutes at 48 kHz
+  NMR_FEED_FAILED,       // playing could not be set up (memory, a thread)
+} nmr_feed_error;
+
+typedef struct nmr_file_feed nmr_file_feed;
+
+// Reads the file (blocking: the whole file is decoded into memory) and starts playing it into
+// `view` (from nmr_render_view_create, outliving the feed), replacing the view's source.
+// `sample_rate` (may be NULL) receives the file's rate. NULL, with `error` set, when the file
+// cannot be played or an argument is NULL.
+nmr_file_feed* nmr_file_feed_create(void* view, const char* path, nmr_feed_error* error,
+                                    double* sample_rate);
+// The view stops reading, then playing stops. NULL is ignored.
+void nmr_file_feed_destroy(nmr_file_feed* feed);
+
 // ---- System capture ---------------------------------------------------------------------------
 // Follows the system output into a meter view (Sources/Render/include/nmr/system_capture.h): the
 // tap is rebuilt when the output device or its format changes, and each outcome is reported.

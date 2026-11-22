@@ -1,18 +1,25 @@
 #!/usr/bin/env bash
 # End-to-end check of system-audio capture with the built app (scripts/build.sh first).
 #
-#   scripts/capture-probe.sh [seconds] [--meter]
+#   scripts/capture-probe.sh [seconds] [--meter | --instance | --feed]
 #
 # --meter runs the meter window itself (--meter-probe) instead of the bare tap: it checks that the
 # captured audio reaches the view (the view is drawing, not idle for silence).
+# --instance runs the meter on a plugin instance instead: nmr_fake_instance sends the test mix
+# over shared memory as a plugin would, and the app must list it, follow it and draw it. No
+# audio plays and no permission is involved.
+# --feed runs the meter on the test mix played from a WAV file (the app's --feed), with no
+# capture and no permission involved either.
 # Plays a quiet test tone (1 kHz at -60 dBFS) with afplay, launches the app through LaunchServices
 # in --tap-probe mode (so the app itself, not the terminal, is the process macOS asks about), and
 # reports whether non-silent audio arrived. The first run on a Mac shows the audio-capture
 # permission prompt; someone must click Allow. A denied permission still starts the tap but
 # delivers only zeros.
 #
-# Exit status: 0 audio captured (with --meter: drawn), 1 silent capture (or an idle meter),
-# 2 the tap did not start (or bad arguments). With --meter, the seconds count from the capture's
+# Exit status: 0 audio captured (with --meter: drawn; with --instance or --feed: the source
+# drawn),
+# 1 silent capture (or an idle meter), 2 the tap did not start (or the instance was never
+# listed, or bad arguments). With --meter, the seconds count from the capture's
 # first report.
 set -euo pipefail
 
@@ -28,9 +35,11 @@ MODE=tap
 for arg in "$@"; do
   case "$arg" in
     --meter) MODE=meter ;;
+    --instance) MODE=instance ;;
+    --feed) MODE=feed ;;
     *)
       if [[ ! "$arg" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
-        echo "usage: scripts/capture-probe.sh [seconds] [--meter]" >&2
+        echo "usage: scripts/capture-probe.sh [seconds] [--meter | --instance | --feed]" >&2
         exit 2
       fi
       CAPTURE_SECONDS="$arg"
@@ -50,6 +59,62 @@ for required in "$APP" "$TOOL"; do
   fi
 done
 mkdir -p "$OUT"
+
+if [[ "$MODE" == feed ]]; then
+  rm -f "$OUT/feed-probe.json"
+  "$TOOL" mix "$OUT/probe-mix.wav" --seconds 10 >/dev/null
+  trap 'rm -f "$OUT/probe-mix.wav"' EXIT
+  open -W -n "$APP" --args --meter-probe "$CAPTURE_SECONDS" --feed "$OUT/probe-mix.wav" \
+    --out "$OUT/feed-probe.json"
+  if [[ ! -f "$OUT/feed-probe.json" ]]; then
+    echo "error: the app wrote no report" >&2
+    exit 2
+  fi
+  jq -c '{source, rendering, idle, notice, phase}' "$OUT/feed-probe.json"
+  if [[ "$(jq -r .source.listed "$OUT/feed-probe.json")" != "true" ]]; then
+    echo "RESULT: the app did not play the file ($(jq -r .source.status "$OUT/feed-probe.json"))"
+    exit 2
+  fi
+  ok='.rendering and (.idle | not) and .notice == null and .phase == "starting"'
+  if [[ "$(jq -r "$ok" "$OUT/feed-probe.json")" != "true" ]]; then
+    echo "RESULT: the file plays but the meter does not draw it, or the capture ran (see above)"
+    exit 1
+  fi
+  echo "RESULT: the meter draws the file it plays, with no capture"
+  exit 0
+fi
+
+if [[ "$MODE" == instance ]]; then
+  FAKE="$BUILD/Tests/tools/nmr_fake_instance"
+  if [[ ! -x "$FAKE" ]]; then
+    echo "error: missing $FAKE (run scripts/build.sh)" >&2
+    exit 2
+  fi
+  rm -f "$OUT/instance-probe.json"
+  NAME="Probe instance $$"
+  "$FAKE" --seconds "$(echo "$CAPTURE_SECONDS + 30" | bc)" --name "$NAME" >/dev/null &
+  fake=$!
+  trap 'kill "$fake" 2>/dev/null || true; wait "$fake" 2>/dev/null || true' EXIT
+  open -W -n "$APP" --args --meter-probe "$CAPTURE_SECONDS" --instance "$NAME" \
+    --out "$OUT/instance-probe.json"
+  if [[ ! -f "$OUT/instance-probe.json" ]]; then
+    echo "error: the app wrote no report" >&2
+    exit 2
+  fi
+  jq -c '{source, rendering, idle, notice}' "$OUT/instance-probe.json"
+  if [[ "$(jq -r .source.listed "$OUT/instance-probe.json")" != "true" ]]; then
+    echo "RESULT: the app never listed the instance"
+    exit 2
+  fi
+  ok='.source.state == "sending" and .rendering and (.idle | not) and .notice == null'
+  if [[ "$(jq -r "$ok" "$OUT/instance-probe.json")" != "true" ]]; then
+    echo "RESULT: the app lists the instance but does not draw it (see above)"
+    exit 1
+  fi
+  echo "RESULT: the meter follows the plugin instance and draws what it sends"
+  exit 0
+fi
+
 "$TOOL" tone "$OUT/probe-tone.wav" --seconds 120 --freq 1000 --dbfs -60 >/dev/null
 rm -f "$OUT/tap-probe.json" "$OUT/meter-probe.json"
 

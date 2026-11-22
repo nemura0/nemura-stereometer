@@ -27,6 +27,8 @@
 #include <nmr/meter_renderer.h>
 #include <nmr/scope_style.h>
 
+#include <nmr/wav_file.h>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -45,41 +47,6 @@ using ScopePoint = nmr::dsp::Point;
 
 constexpr double kSettleS = 1;
 constexpr size_t kHistory = 240;
-
-struct Wav {
-  double rate = 0;
-  std::vector<float> samples;  // interleaved stereo
-};
-
-uint32_t u32(const uint8_t* p) { return p[0] | p[1] << 8 | p[2] << 16 | uint32_t{p[3]} << 24; }
-uint16_t u16(const uint8_t* p) { return static_cast<uint16_t>(p[0] | p[1] << 8); }
-
-// 32-bit float stereo only (what nmr_make_test_wav writes).
-std::optional<Wav> readWav(const char* path) {
-  std::ifstream file(path, std::ios::binary);
-  const std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(file)), {});
-  if (bytes.size() < 12 || std::memcmp(bytes.data(), "RIFF", 4) != 0 ||
-      std::memcmp(bytes.data() + 8, "WAVE", 4) != 0) {
-    return std::nullopt;
-  }
-  Wav wav;
-  bool format_ok = false;
-  for (size_t at = 12; at + 8 <= bytes.size();) {
-    const uint8_t* chunk = bytes.data() + at;
-    const size_t size = u32(chunk + 4);
-    if (at + 8 + size > bytes.size()) break;
-    if (std::memcmp(chunk, "fmt ", 4) == 0 && size >= 16) {
-      format_ok = u16(chunk + 8) == 3 && u16(chunk + 10) == 2 && u16(chunk + 22) == 32;
-      wav.rate = u32(chunk + 12);
-    } else if (std::memcmp(chunk, "data", 4) == 0 && format_ok) {
-      wav.samples.resize(size / sizeof(float));
-      std::memcpy(wav.samples.data(), chunk + 8, wav.samples.size() * sizeof(float));
-    }
-    at += 8 + size + (size & 1);
-  }
-  if (!format_ok || wav.samples.empty()) return std::nullopt;
-  return wav;
-}
 
 using Options = std::map<std::string, std::string>;
 
@@ -186,9 +153,19 @@ int main(int argc, char** argv) {
       if (std::strncmp(argv[i], "--", 2) != 0) return usage();
       o[argv[i] + 2] = argv[i + 1];
     }
-    const std::optional<Wav> wav = readWav(argv[1]);
+    nmr::wav::Error wav_error = nmr::wav::Error::kNone;
+    const std::optional<nmr::wav::Audio> wav = nmr::wav::read(argv[1], wav_error);
     if (!wav) {
-      std::fprintf(stderr, "nmr_snapshot: %s is not a 32-bit float stereo WAV\n", argv[1]);
+      const char* why = "cannot be read";
+      switch (wav_error) {
+        case nmr::wav::Error::kNotWav: why = "is not a WAV file"; break;
+        case nmr::wav::Error::kUnsupported: why = "has a sample format or rate not played"; break;
+        case nmr::wav::Error::kEmpty: why = "holds no audio"; break;
+        case nmr::wav::Error::kTooLong: why = "is too long"; break;
+        case nmr::wav::Error::kNone:
+        case nmr::wav::Error::kUnreadable: break;
+      }
+      std::fprintf(stderr, "nmr_snapshot: %s %s\n", argv[1], why);
       return 1;
     }
     id<MTLDevice> device = MTLCreateSystemDefaultDevice();
@@ -210,7 +187,7 @@ int main(int argc, char** argv) {
                    : color == "midside"   ? nmr::dsp::ColorMode::kMidSide
                                           : nmr::dsp::ColorMode::kFrequency;
     nmr::dsp::Analyzer analyzer;
-    analyzer.prepare(wav->rate);
+    analyzer.prepare(wav->sample_rate);
     analyzer.configure(config);
 
     const auto size = static_cast<uint32_t>(number(o, "size", 600));
@@ -234,7 +211,7 @@ int main(int argc, char** argv) {
     const std::string shape = option(o, "shape", "soft");
     nmr::ScopeStyleInput style_input{
         .dt = 1 / fps,
-        .sample_rate = wav->rate,
+        .sample_rate = wav->sample_rate,
         .trail_s = number(o, "trail", 100) / 1000,
         .brightness = static_cast<float>(number(o, "brightness", 100) / 100),
         .point_size_pt = static_cast<float>(number(o, "point", 2)),
@@ -298,21 +275,21 @@ int main(int argc, char** argv) {
                                                  options:MTLResourceStorageModeShared];
     id<MTLCommandQueue> queue = [device newCommandQueue];
 
-    const uint64_t frames_total = wav->samples.size() / 2;
-    const double end_s = std::min(number(o, "at", 5), frames_total / wav->rate);
-    const auto end = static_cast<uint64_t>(end_s * wav->rate);
-    uint64_t at = static_cast<uint64_t>(std::max(0.0, end_s - kSettleS) * wav->rate);
+    const uint64_t frames_total = wav->stereo.size() / 2;
+    const double end_s = std::min(number(o, "at", 5), frames_total / wav->sample_rate);
+    const auto end = static_cast<uint64_t>(end_s * wav->sample_rate);
+    uint64_t at = static_cast<uint64_t>(std::max(0.0, end_s - kSettleS) * wav->sample_rate);
     std::vector<ScopePoint> points;
     std::vector<float> colors;
     std::vector<float> history;
     double frame_end = static_cast<double>(at);
     frame.clear = true;
     while (at < end) {
-      frame_end = std::min(frame_end + wav->rate / fps, static_cast<double>(end));
+      frame_end = std::min(frame_end + wav->sample_rate / fps, static_cast<double>(end));
       const auto count = static_cast<uint32_t>(static_cast<uint64_t>(frame_end) - at);
       points.resize(count);
       colors.resize(count);
-      analyzer.process(wav->samples.data() + at * 2, count, points.data(), colors.data());
+      analyzer.process(wav->stereo.data() + at * 2, count, points.data(), colors.data());
       at += count;
       history.push_back(analyzer.correlation());
       if (history.size() > kHistory) history.erase(history.begin());

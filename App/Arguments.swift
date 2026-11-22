@@ -17,6 +17,18 @@ struct Arguments: Sendable {
     return value.hasPrefix("--") ? nil : value
   }
 
+  enum OptionError: Error, Equatable {
+    case missingValue(String)
+  }
+
+  /// The value given with `option`: nil when the option is absent, an error when it is there
+  /// without a value (never a silent default for a forgotten value).
+  func option(_ option: String) -> Result<String?, OptionError> {
+    guard contains(option) else { return .success(nil) }
+    guard let value = value(after: option) else { return .failure(.missingValue(option)) }
+    return .success(value)
+  }
+
   enum SecondsError: Error, Equatable {
     case invalid(String)
   }

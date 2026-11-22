@@ -2,7 +2,8 @@ import AppKit
 import NMRCoreC
 import os
 
-/// Runs the overlay meter (App/Overlay) fed by the system output, or the `--meter-probe`.
+/// Runs the overlay meter (App/Overlay) fed by the system output or a plugin instance
+/// (App/Sources), or the `--meter-probe`.
 ///
 /// The first run explains the audio-capture permission before the capture starts (and with it
 /// the macOS prompt). The probe never shows that window, writes nothing to the app's defaults,
@@ -15,14 +16,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private let permission = PermissionWindow()
   private var menuBar: MenuBarController?
   private var settingsWindow: SettingsWindow?
+  private var sources: SourceController?
   private let probe: MeterProbe?
   private var probeTimerArmed = false
   private var probeDone = false
   private static let log = Logger(
     subsystem: Bundle.main.bundleIdentifier ?? "app", category: "app")
 
-  init(probe: MeterProbe? = nil) {
+  /// `--feed`: played instead of the system output from the start.
+  private let feed: URL?
+
+  init(probe: MeterProbe? = nil, feed: URL? = nil) {
     self.probe = probe
+    self.feed = feed
     // The probe starts from the first-run settings and keeps nothing.
     store = SettingsStore(defaults: probe == nil ? .standard : nil)
     super.init()
@@ -50,27 +56,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let showSettings: () -> Void = { [weak self] in self?.settingsWindow?.show() }
     menuBar.onShowSettings = showSettings
     overlay.onShowSettings = showSettings
+    let sources = SourceController(overlay: overlay, model: menuBar.model, sources: PluginSources())
+    self.sources = sources
+    menuBar.model.feedFile = feed
+    sources.start()
     if let probe {
-      arm(probe, overlay)
-      overlay.startCapture(soundSeenBefore: false)
+      if case .instance(let name) = probe.source {
+        arm(probe, following: name, sources)
+      } else if let feed {
+        probeTimerArmed = true
+        sources.choose(.file(feed))
+        after(probe.seconds) { $0.finish(probe) }
+      } else {
+        arm(probe, overlay)
+        overlay.startCapture(soundSeenBefore: false)
+      }
       return
     }
     overlay.onCaptureChange = { [weak self] state in
       self?.menuBar?.model.capture = state
       self?.memory.remember(state)
     }
+    overlay.onCaptureWanted = { [weak self] in self?.allowCapture() }
+    if let feed {
+      sources.choose(.file(feed))  // no capture yet, so no permission window either
+      if memory.introShown { allowCapture() }  // System Output starts it when chosen
+      return
+    }
+    allowCapture()
+  }
+
+  /// Lets the capture start, after the first-run window explains the permission if it has not
+  /// yet (the capture starts at once if System Output is shown).
+  private func allowCapture() {
     if memory.introShown {
-      overlay.startCapture(soundSeenBefore: memory.soundSeen)
-    } else {
-      permission.show(.intro) { [weak self] in
-        guard let self else { return }
-        self.memory.introShown = true
-        self.overlay?.startCapture(soundSeenBefore: self.memory.soundSeen)
-      }
+      overlay?.startCapture(soundSeenBefore: memory.soundSeen)
+      return
+    }
+    permission.show(.intro) { [weak self] in
+      guard let self else { return }
+      self.memory.introShown = true
+      self.overlay?.startCapture(soundSeenBefore: self.memory.soundSeen)
     }
   }
 
   func applicationWillTerminate(_ notification: Notification) {
+    sources?.stop()
     overlay?.stop()
   }
 
@@ -152,6 +183,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
   }
 
+  /// The probe follows the first instance named `name` once it is listed; its seconds start
+  /// there.
+  private func arm(_ probe: MeterProbe, following name: String, _ sources: SourceController) {
+    sources.onPoll = { [weak self, weak sources] instances in
+      guard let self, let sources, !self.probeTimerArmed,
+        let instance = instances.first(where: { $0.name == name })
+      else { return }
+      self.probeTimerArmed = true
+      sources.choose(.instance(instance))
+      self.after(probe.seconds) { $0.finish(probe) }
+    }
+    after(probe.seconds + MeterProbe.instanceAllowance) { delegate in
+      if !delegate.probeTimerArmed { delegate.finish(probe) }
+    }
+  }
+
   private func after(_ seconds: Double, _ work: @escaping @MainActor (AppDelegate) -> Void) {
     DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
       MainActor.assumeIsolated {
@@ -164,11 +211,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private func finish(_ probe: MeterProbe) {
     guard !probeDone else { return }
     probeDone = true
-    let report = MeterProbe.report(overlay, menuBar: menuBar)
+    let report = MeterProbe.report(overlay, menuBar: menuBar, source: probe.source)
     let code = MeterProbe.write(report, to: probe.outputPath)
-    // Still starting: the capture queue may be inside the permission prompt, and stopping would
-    // wait for it. Exiting takes the private tap and aggregate down with the process.
-    if report.phase != .starting { overlay?.stop() }
+    sources?.stop()
+    // A capture still starting may be inside the permission prompt, and stopping it would wait
+    // for that; exiting takes the private tap and aggregate down with the process. Following a
+    // source, there is no capture to wait for.
+    if probe.source != nil || report.phase != .starting { overlay?.stop() }
     exit(code)
   }
 }

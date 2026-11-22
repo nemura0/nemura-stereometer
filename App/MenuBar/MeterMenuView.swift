@@ -60,18 +60,55 @@ struct MeterMenuView: View {
   private var source: some View {
     HStack(spacing: 8) {
       Circle().fill(statusColor).frame(width: 7, height: 7)
-      Text("System Output")
-      Spacer()
-      Text(model.sourceStatus).font(.caption).foregroundStyle(.secondary)
+        .accessibilityHidden(true)
+      Menu {
+        if let file = model.feedFile {
+          entry(MeterMenuModel.fileTitle(file), .file(file))
+        }
+        entry(MeterMenuModel.systemOutput, .systemOutput)
+        if !model.instances.isEmpty {
+          Section("Plugin instances") {
+            ForEach(model.instances) { instance in
+              entry(model.title(for: instance), .instance(instance))
+            }
+          }
+        }
+      } label: {
+        Text(model.sourceTitle).lineLimit(1).truncationMode(.middle)
+      }
+      .menuStyle(.borderlessButton)
+      .fixedSize(horizontal: false, vertical: true)
+      .accessibilityLabel("Source")
+      .accessibilityValue(model.sourceTitle)
+      Spacer(minLength: 8)
+      Text(model.sourceStatus).font(.caption).foregroundStyle(.secondary).lineLimit(1)
     }
-    .accessibilityElement(children: .combine)
+  }
+
+  /// A picker entry, checked while it is the source (a menu toggle, so VoiceOver reads it too).
+  private func entry(_ title: String, _ source: MeterSource) -> some View {
+    Toggle(
+      title,
+      isOn: Binding(
+        get: { source.isSame(as: model.source) }, set: { _ in model.choose(source) }))
   }
 
   private var statusColor: Color {
+    if case .file = model.source {
+      if case .playing = model.fileState { return .green }
+      return .orange
+    }
+    if case .instance = model.source {
+      switch model.instanceState {
+      case .sending: return .green
+      case .quiet: return .gray
+      case .waiting: return .orange
+      }
+    }
     switch model.capture.phase {
-    case .starting: .gray
-    case .failed: .orange
-    case .capturing: model.capture.signal == .silenceWhilePlaying ? .orange : .green
+    case .starting: return .gray
+    case .failed: return .orange
+    case .capturing: return model.capture.signal == .silenceWhilePlaying ? .orange : .green
     }
   }
 

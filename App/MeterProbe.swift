@@ -1,7 +1,8 @@
 import Foundation
 import NMRCoreC
 
-/// `--meter-probe`: runs the meter window fed by the system output, then writes a JSON report of
+/// `--meter-probe`: runs the meter window fed by the system output (or, with `--instance`, by a
+/// plugin instance), then writes a JSON report of
 /// what the capture said and whether the meter was drawing sound, and quits. The probe's seconds
 /// count from the capture's first report (so a slow start or the permission prompt does not eat
 /// them); with no report within startAllowance more, it reports what it has.
@@ -11,8 +12,20 @@ struct MeterProbe: Sendable {
   /// Extra time for the capture's first report: the first run waits on the permission prompt.
   static let startAllowance = 30.0
 
+  /// Extra time for the instance named by `--instance` to be listed.
+  static let instanceAllowance = 10.0
+
   let seconds: Double
   let outputPath: String?
+  /// What the probe follows instead of the system output.
+  enum Source: Equatable, Sendable {
+    /// `--instance <name>`: the first plugin instance of that name.
+    case instance(String)
+    /// `--feed <file.wav>`.
+    case file
+  }
+
+  var source: Source? = nil
 
   struct Report: Encodable {
     enum Phase: String, Encodable {
@@ -42,7 +55,54 @@ struct MeterProbe: Sendable {
     let idle: Bool
     let overlay: OverlayReport?
     let menuBar: MenuBarReport?
+    /// With `--instance` or `--feed`: what the meter's source is.
+    let source: SourceReport?
     let version: String
+  }
+
+  /// The plugin instance (`--instance`) or file (`--feed`) the probe followed.
+  struct SourceReport: Encodable {
+    /// "instance" or "file".
+    let kind: String
+    /// The instance asked for was listed and chosen; the file plays.
+    let listed: Bool
+    let title: String
+    /// "waiting", "sending" or "quiet" (InstanceState); "playing" or "failed" for a file.
+    let state: String
+    let status: String
+
+    @MainActor
+    init(_ model: MeterMenuModel, instance name: String) {
+      kind = "instance"
+      if case .instance(let instance) = model.source, instance.name == name {
+        listed = true
+        title = instance.title
+      } else {
+        listed = false
+        title = name
+      }
+      state =
+        switch model.instanceState {
+        case .waiting: "waiting"
+        case .sending: "sending"
+        case .quiet: "quiet"
+        }
+      status = model.sourceStatus
+    }
+
+    @MainActor
+    init(file model: MeterMenuModel) {
+      kind = "file"
+      title = model.sourceTitle
+      if case .file = model.source, case .playing = model.fileState {
+        (listed, state) = (true, "playing")
+      } else {
+        (listed, state) = (false, "failed")
+      }
+      status = model.sourceStatus
+    }
+
+    var drawsWhenDrawing: Bool { listed && (state == "sending" || state == "playing") }
   }
 
   /// The menu-bar icon and its popover, checked inside the running app (the popover is laid out,
@@ -146,15 +206,17 @@ struct MeterProbe: Sendable {
     }
   }
 
-  /// The report for `overlay` now.
+  /// The report for `overlay` now, following `source` (nil: the system output).
   @MainActor
-  static func report(_ overlay: OverlayController?, menuBar: MenuBarController?) -> Report {
+  static func report(
+    _ overlay: OverlayController?, menuBar: MenuBarController?, source: Source? = nil
+  ) -> Report {
     let version = String(cString: nmr_version())
     guard let overlay else {
       return Report(
         phase: .failed, capturing: false, failedStep: "meter view", status: -1, sampleRate: 0,
         channels: 0, rebuilds: 0, signal: "unknown", notice: nil, rendering: false, idle: false,
-        overlay: nil, menuBar: nil, version: version)
+        overlay: nil, menuBar: nil, source: nil, version: version)
     }
     let meter = overlay.meter
     var (step, status, rate, channels) = ("", Int32(0), 0.0, 0)
@@ -171,7 +233,16 @@ struct MeterProbe: Sendable {
       signal: Self.name(meter.capture.signal), notice: overlay.notice?.message,
       rendering: nmr_render_view_is_rendering(view), idle: nmr_render_view_is_idle(view),
       overlay: OverlayReport(overlay),
-      menuBar: menuBar.map { MenuBarReport($0, overlay: overlay) }, version: version)
+      menuBar: menuBar.map { MenuBarReport($0, overlay: overlay) },
+      source: source.flatMap { source in
+        menuBar.map { menuBar in
+          switch source {
+          case .instance(let name): SourceReport(menuBar.model, instance: name)
+          case .file: SourceReport(file: menuBar.model)
+          }
+        }
+      },
+      version: version)
   }
 
   static func name(_ signal: CaptureState.Signal) -> String {
@@ -182,9 +253,9 @@ struct MeterProbe: Sendable {
     }
   }
 
-  /// Writes `report` and returns the app's exit code: 0 drawing sound, 1 capturing but silent or
-  /// idle, 2 not capturing, 3 the report could not be written. (`open -W` does not pass the code
-  /// on, so scripts/capture-probe.sh reads the report.)
+  /// Writes `report` and returns the app's exit code (exitCode(for:)), or 3 when the report could
+  /// not be written. (`open -W` does not pass the code on, so scripts/capture-probe.sh reads the
+  /// report.)
   static func write(_ report: Report, to outputPath: String?) -> Int32 {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -200,7 +271,18 @@ struct MeterProbe: Sendable {
       FileHandle.standardError.write(Data("meter probe: \(error)\n".utf8))
       return 3
     }
+    return exitCode(for: report)
+  }
+
+  /// 0 drawing sound, 1 capturing (or following the source) but silent or idle, 2 not capturing
+  /// (or the instance never listed, the file not playing).
+  static func exitCode(for report: Report) -> Int32 {
+    let drawing = report.rendering && !report.idle
+    if let source = report.source {
+      if !source.listed { return 2 }
+      return source.drawsWhenDrawing && drawing ? 0 : 1
+    }
     if !report.capturing { return 2 }
-    return report.rendering && !report.idle ? 0 : 1
+    return drawing ? 0 : 1
   }
 }

@@ -5,11 +5,13 @@ add_executable(nmr_tests
   test_main.cpp
   colormap_test.cpp
   dsp_test.cpp
+  file_player_test.cpp
   files_test.cpp
   frame_ring_test.cpp
   frame_rate_test.cpp
   guides_test.cpp
   idle_test.cpp
+  instance_source_test.cpp
   layout_test.cpp
   meter_bars_test.cpp
   playhead_test.cpp
@@ -20,7 +22,8 @@ add_executable(nmr_tests
   settings_test.cpp
   shm_transport_test.cpp
   signal_watch_test.cpp
-  test_mix_test.cpp)
+  test_mix_test.cpp
+  wav_file_test.cpp)
 # Core-internal headers (settings_migration.h) and nlohmann/json, which the migration tests use.
 target_include_directories(nmr_tests PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/third_party"

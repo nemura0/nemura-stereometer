@@ -21,12 +21,20 @@ final class OverlayController: NSObject, NSMenuDelegate {
   var onShowPermission: (() -> Void)?
   /// The gear and the quick menu's Settings… item; without it the gear opens the quick menu.
   var onShowSettings: (() -> Void)?
+  /// System Output was chosen before the capture may start (the first-run window has not been
+  /// through yet): the app explains the permission, then calls startCapture().
+  var onCaptureWanted: (() -> Void)?
 
   private let controls = HoverControls()
   private let noticeView = NoticeView()
   /// What the notice over the meter says now, if anything.
   var notice: CaptureNotice? { noticeView.notice }
   private var soundSeenBefore = false
+  /// False while a plugin instance or a file is shown: capture reports and notices do not
+  /// apply then.
+  private var followsSystemOutput = true
+  /// Set by startCapture(): from then on, System Output starts the capture when chosen.
+  private var mayCapture = false
   private let hotKeys = HotKeys()
   /// Right-click and the gear; its items are rebuilt each time it opens.
   let quickMenu = NSMenu()
@@ -75,14 +83,48 @@ final class OverlayController: NSObject, NSMenuDelegate {
     if !clickThrough || !shown { Self.log.error("a global hotkey is taken by another app") }
   }
 
-  /// Starts following the system output (MeterController.startCapture).
+  /// Lets the capture start (after the first-run window, if there is one) and starts it,
+  /// unless a plugin instance or a file is shown: then it starts when System Output is chosen.
   func startCapture(soundSeenBefore: Bool) {
-    self.soundSeenBefore = soundSeenBefore
+    self.soundSeenBefore = self.soundSeenBefore || soundSeenBefore
+    mayCapture = true
+    guard followsSystemOutput else { return }
     meter.startCapture(soundSeenBefore: soundSeenBefore)
+  }
+
+  /// Shows `source`: the system output (the capture starts again, or first the first-run
+  /// window through onCaptureWanted) or a plugin instance or file (the capture stops, and its
+  /// notice goes). Returns how a file plays (nil for the other sources).
+  @discardableResult
+  func follow(_ source: MeterSource, in sources: PluginSources?) -> FileState? {
+    if case .systemOutput = source {
+      meter.stopFeed()
+      meter.stopFile()
+      followsSystemOutput = true
+      if mayCapture {
+        meter.startCapture(soundSeenBefore: soundSeenBefore || meter.capture.signal == .sound)
+      } else {
+        onCaptureWanted?()
+      }
+      return nil
+    }
+    soundSeenBefore = soundSeenBefore || meter.capture.signal == .sound
+    followsSystemOutput = false
+    noticeView.show(nil)
+    switch source {
+    case .instance(let instance):
+      if let sources { meter.follow(instance: instance.id, in: sources) }
+      return nil
+    case .file(let url):
+      return meter.play(file: url)
+    case .systemOutput:
+      return nil
+    }
   }
 
   /// A failed capture, tried again from the start (its notice goes until the new start reports).
   func restartCapture() {
+    guard followsSystemOutput else { return }
     let soundSeen = soundSeenBefore || meter.capture.signal == .sound
     meter.stopCapture()
     meter.startCapture(soundSeenBefore: soundSeen)
@@ -98,6 +140,8 @@ final class OverlayController: NSObject, NSMenuDelegate {
   /// Before quitting.
   func stop() {
     hotKeys.unregisterAll()
+    meter.stopFeed()
+    meter.stopFile()
     meter.stopCapture()
   }
 
@@ -170,7 +214,7 @@ final class OverlayController: NSObject, NSMenuDelegate {
   }
 
   private func captureChanged(_ state: CaptureState) {
-    noticeView.show(CaptureNotice(state))
+    if followsSystemOutput { noticeView.show(CaptureNotice(state)) }
     onCaptureChange?(state)
   }
 

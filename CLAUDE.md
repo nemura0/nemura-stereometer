@@ -19,6 +19,9 @@ scripts/gen-config.sh [--check]  # regenerate Sources/Core/include/nmr/product_c
 scripts/fetch-deps.sh            # pinned CLAP / clap-wrapper / VST3 SDK / AudioUnitSDK into external/
 scripts/check-sources.sh         # CMake and SwiftPM compile the same Sources/{Core,Render,CoreC}
 scripts/capture-probe.sh [s]     # end-to-end system-audio capture check with the built app (0 = audio arrived)
+scripts/capture-probe.sh [s] --meter|--instance|--feed  # the meter in-process; a stand-in plugin
+                                 # instance (build/Tests/tools/nmr_fake_instance); a WAV played in
+                                 # a loop (the app also takes `--feed <file.wav>`)
 scripts/perf.sh reference|minimeters  # baselines: CPU % + footprint at a window size (docs/BUDGET.md)
 ```
 

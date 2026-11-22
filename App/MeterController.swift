@@ -45,7 +45,7 @@ struct CaptureState: Equatable, Sendable {
   }
 }
 
-/// The meter view fed by the system output, with the settings it draws.
+/// The meter view fed by the system output or a plugin instance, with the settings it draws.
 ///
 /// While capturing, the capture's callback holds a reference to the controller, so it lives until
 /// stopCapture() (call it before quitting, as the app delegate does).
@@ -61,6 +61,10 @@ final class MeterController {
 
   private var handle: OpaquePointer?
   private var callbackReference: Unmanaged<MeterController>?
+  /// The plugin instance shown instead of the system output, if any.
+  private var feed: OpaquePointer?
+  /// The `--feed` file played instead, if any.
+  private var file: OpaquePointer?
   private static let log = Logger(
     subsystem: Bundle.main.bundleIdentifier ?? "app", category: "capture")
 
@@ -122,6 +126,50 @@ final class MeterController {
     self.handle = nil
     callbackReference?.release()
     callbackReference = nil
+  }
+
+  /// Shows plugin instance `id` instead of the system output (the capture stops). Update it
+  /// after each poll of `sources`, and stop it before closing them.
+  func follow(instance id: UInt64, in sources: PluginSources) {
+    stopCapture()
+    stopFeed()
+    stopFile()
+    feed = nmr_instance_feed_create(viewPointer, sources.handle, id)
+    if feed == nil { Self.log.error("the plugin instance could not be followed") }
+  }
+
+  /// Follows the instance in the latest poll; nil when no instance is followed.
+  func updateFeed() -> InstanceState? {
+    guard let feed else { return nil }
+    return InstanceState(nmr_instance_feed_update(feed))
+  }
+
+  /// The view stops reading the instance.
+  func stopFeed() {
+    nmr_instance_feed_destroy(feed)
+    feed = nil
+  }
+
+  /// Plays the WAV file at `url` in a loop instead of the system output (the capture stops).
+  /// Reads the whole file first.
+  func play(file url: URL) -> FileState {
+    stopCapture()
+    stopFeed()
+    stopFile()
+    var error = NMR_FEED_UNREADABLE
+    var rate = 0.0
+    file = nmr_file_feed_create(viewPointer, url.path, &error, &rate)
+    guard file != nil else {
+      let problem = FileState.Problem(error)
+      Self.log.error("--feed: \(problem.description, privacy: .public)")
+      return .failed(problem)
+    }
+    return .playing(sampleRate: rate)
+  }
+
+  func stopFile() {
+    nmr_file_feed_destroy(file)
+    file = nil
   }
 
   private var viewPointer: UnsafeMutableRawPointer {
