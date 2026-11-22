@@ -43,11 +43,14 @@ class Builder {
     const float width = strip.width / static_cast<float>(columns);
     const float middle = strip.y + strip.height / 2;
     const std::span<const float> shown = values.last(columns);
+    // Columns meet on whole pixels: a shared edge inside a pixel would leave a seam.
+    float left = std::round(strip.x);
     for (size_t i = 0; i < columns; ++i) {
+      const float right = std::round(strip.x + static_cast<float>(i + 1) * width);
       const float height = held(shown[i]) * strip.height / 2;
-      add({strip.x + static_cast<float>(i) * width, std::min(middle, middle - height), width,
-           std::abs(height)},
+      add({left, std::min(middle, middle - height), right - left, std::abs(height)},
           height >= 0 ? palette.positive : palette.negative);
+      left = right;
     }
   }
 

@@ -4,7 +4,8 @@
 // positive color above 0 and the negative color below. Balance bar: the same, filled toward the
 // louder side (−1 left … +1 right) in the positive color. History strip: a track and one column
 // per value, oldest at the left, rising from the strip's middle for positive values and falling
-// for negative ones; at most one column per pixel (the newest are kept). Values that are not
+// for negative ones; columns meet on whole pixels (edges rounded), at most one per pixel, and
+// the newest are kept. Values that are not
 // numbers read as 0 and all are held to −1 … 1. Colors are premultiplied RGBA. Render thread;
 // no allocation.
 #pragma once

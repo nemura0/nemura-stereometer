@@ -153,3 +153,19 @@ TEST_CASE("meter bars: a long history fits the rect limit") {
   CHECK(up.size() == MeterBars::kMaxHistory);
   for (uint32_t i = 0; i < m.count; ++i) CHECK(inside(m.rects[i].rect, {0, 0, 5000, 400}));
 }
+
+TEST_CASE("meter bars: history columns meet on whole pixels, leaving no seams") {
+  Layout layout = bars();
+  layout.correlation_history = {10.3f, 220, 7, 20};
+  const std::vector<float> history{0.5f, 0.5f, 0.5f};
+  // (Edges round to the nearest pixel, so the first may start a little before the strip.)
+  const auto up = colored(meterBars(layout, 0, 0, history), {0, 200, 100, 50}, kPalette.positive);
+  REQUIRE(up.size() == 3);
+  float edge = std::round(10.3f);
+  for (const Rect& column : up) {
+    CHECK(column.x == edge);
+    CHECK(column.width == std::round(column.width));
+    edge = column.x + column.width;
+  }
+  CHECK(edge == std::round(10.3f + 7));
+}
