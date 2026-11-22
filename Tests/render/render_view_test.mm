@@ -1,0 +1,69 @@
+// The view on screen: a small window, the real display link.
+#import <AppKit/AppKit.h>
+
+#import <nmr/render_view.h>
+
+#include <doctest/doctest.h>
+
+#include <vector>
+
+namespace {
+
+// Handles events and the main queue until `done` or `seconds` pass.
+bool spinUntil(bool (^done)(void), double seconds) {
+  NSDate* deadline = [NSDate dateWithTimeIntervalSinceNow:seconds];
+  while (!done()) {
+    if ([deadline timeIntervalSinceNow] <= 0) return false;
+    NSEvent* event = [NSApp nextEventMatchingMask:NSEventMaskAny
+                                        untilDate:[NSDate dateWithTimeIntervalSinceNow:0.01]
+                                           inMode:NSDefaultRunLoopMode
+                                          dequeue:YES];
+    if (event != nil) [NSApp sendEvent:event];
+  }
+  return true;
+}
+
+}  // namespace
+
+TEST_CASE("render view: stops in silence and starts again when sound arrives") {
+  [NSApplication sharedApplication];
+  [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+  [NSApp finishLaunching];
+  NSWindow* window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 160, 160)
+                                                 styleMask:NSWindowStyleMaskBorderless
+                                                   backing:NSBackingStoreBuffered
+                                                     defer:NO];
+  window.releasedWhenClosed = NO;
+  const float background[4] = {0, 0, 0, 1};
+  NMR_OBJC(RenderView)* view =
+      [[NMR_OBJC(RenderView) alloc] initWithFrame:NSMakeRect(0, 0, 160, 160)
+                                       background:background];
+  window.contentView = view;
+  [window orderFrontRegardless];
+
+  if (!spinUntil(^bool { return view.isRendering == YES; }, 3)) {
+    // No window server (a headless runner): reported as a warning, not a pass.
+    WARN_MESSAGE(false, "the window never became visible (occlusion "
+                            << window.occlusionState << ", screen " << (window.screen != nil)
+                            << "): skipped");
+    [window close];
+    return;
+  }
+  // No source: silence. Idle after the trail plus 250 ms.
+  CHECK(spinUntil(^bool { return view.isIdle == YES; }, 3));
+  CHECK_FALSE(view.isRendering);
+
+  const nmr::LocalFrameRing ring(1 << 15);
+  [view setSource:ring.view() sampleRate:48000];  // a new source: it looks, then stops again
+  CHECK(view.isRendering);
+  CHECK(spinUntil(^bool { return view.isIdle == YES; }, 3));
+
+  std::vector<float> sound(2 * 512, 0.1f);
+  nmr::FrameRingView writer = ring.view();
+  writer.write(sound.data(), 512);
+  CHECK(spinUntil(^bool { return view.isIdle == NO; }, 1));
+  CHECK(view.isRendering);
+
+  [view setSource:{} sampleRate:48000];  // the ring goes away first
+  [window close];
+}

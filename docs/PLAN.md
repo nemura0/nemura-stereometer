@@ -8,7 +8,8 @@ Legend: `[x]` done and verified, `[~]` in progress / partially verified, `[ ]` n
       docs/DECISIONS.md, docs/BUDGET.md, config/, .gitignore; PROMPT.md moved to docs/PROMPT.md
 - [x] Public repo `nemura0/nemura-stereometer` created and pushed with `gh`
 - [x] `ci.yml` on macos-26 (newest Xcode on the image) builds and runs tests
-- [x] Hello-world CLAP pass-through with a Metal editor (runtime shaders, CAMetalDisplayLink)
+- [x] Hello-world CLAP pass-through with a Metal editor (runtime shaders, CAMetalDisplayLink;
+      the hello scene was replaced by the meter in Phase 2)
 - [x] Wrapped to VST3 + AUv2 (clap-wrapper), Universal, installed to ~/Library/Audio/Plug-Ins/*
 - [x] auval passes
 - [x] pluginval strictness 8 passes, arm64 and x86_64 (`arch -x86_64`), VST3 and AU
@@ -40,10 +41,12 @@ Legend: `[x]` done and verified, `[~]` in progress / partially verified, `[ ]` n
 
 ## Phase 2: renderer and NEMURA mode
 
-- [ ] Shared renderer: all modes, view options, color modes, shapes, lines, glow, guides, meters
-- [ ] Paced playhead, Auto frame rate, idle stop; the render thread runs the DSP with FTZ/DAZ
-      in the x86_64 slice (its filters decay into subnormals in silence)
-- [ ] `scripts/snapshots.sh` renders offscreen PNGs per mode from a test WAV
+- [~] Shared renderer: all modes, view options, color modes, shapes, lines, guides, meters
+      done (offscreen GPU tests); glow and numeric readouts pending
+- [x] Paced playhead, Auto frame rate, idle stop; the render thread runs the DSP with FTZ/DAZ
+      in the x86_64 slice (its filters decay into subnormals in silence); the plugin editor
+      shows its input (the app's capture is wired in Phase 3)
+- [x] `scripts/snapshots.sh` renders offscreen PNGs per mode from a test WAV
 - [ ] NEMURA mode: 3 original concepts, a snapshot of each
 - [ ] **CHECKPOINT B** (snapshots, pacing stats, Instant calibrated against the reference)
 

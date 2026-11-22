@@ -47,6 +47,16 @@ void Editor::setSize(uint32_t width, uint32_t height) {
 
 void Editor::setVisible(bool visible) { impl_->view.hidden = !visible; }
 
+// Activation may come from a host thread (some AU paths); the view is AppKit, main thread only.
+void Editor::setSource(FrameRingView ring, double sample_rate) {
+  if ([NSThread isMainThread]) {
+    [impl_->view setSource:ring sampleRate:sample_rate];
+    return;
+  }
+  __weak NMR_OBJC(RenderView)* view = impl_->view;
+  dispatch_async(dispatch_get_main_queue(), ^{ [view setSource:ring sampleRate:sample_rate]; });
+}
+
 void Editor::clampSize(uint32_t& width, uint32_t& height) noexcept {
   width = std::clamp(width, kMinSize, kMaxSize);
   height = std::clamp(height, kMinSize, kMaxSize);

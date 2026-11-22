@@ -1,7 +1,9 @@
 #include "plugin.h"
 
+#include <nmr/frame_ring.h>
 #include <nmr/product_config.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <memory>
@@ -67,9 +69,16 @@ class DenormalScope {};
 // ---------------------------------------------------------------------------------------------
 // Plugin instance
 
+// What the editor reads: 1.3 s at 48 kHz, more than the playhead ever trails.
+constexpr uint32_t kEditorRingFrames = 1 << 16;
+constexpr double kDefaultSampleRate = 48000;
+
 struct Instance {
   clap_plugin_t clap{};
   const clap_host_t* host = nullptr;
+  LocalFrameRing editor_ring{kEditorRingFrames};  // outlives the editor (declared first)
+  FrameRingView ring_writer = editor_ring.view();  // audio thread only
+  double sample_rate = kDefaultSampleRate;          // main thread
   std::unique_ptr<Editor> editor;
   uint32_t editor_width = Editor::kDefaultWidth;
   uint32_t editor_height = Editor::kDefaultHeight;
@@ -81,7 +90,17 @@ Instance* self(const clap_plugin_t* plugin) { return static_cast<Instance*>(plug
 // ---------------------------------------------------------------------------------------------
 // Audio thread
 
-clap_process_status process(const clap_plugin_t*, const clap_process_t* process) {
+// The editor's copy of what passes through: a wait-free write into the local ring (memcpy and
+// atomics). Reads the output, which holds every frame (a constant input is filled out).
+void feedEditor(Instance& instance, const clap_audio_buffer_t& out, uint32_t frames) noexcept {
+  if (out.channel_count == 0 || out.data32 == nullptr) return;
+  const float* left = out.data32[0];
+  const float* right = out.data32[out.channel_count > 1 ? 1 : 0];  // mono: both sides
+  if (left == nullptr || right == nullptr) return;
+  instance.ring_writer.writeSplit(left, right, frames);
+}
+
+clap_process_status process(const clap_plugin_t* plugin, const clap_process_t* process) {
   [[maybe_unused]] const DenormalScope denormals;  // x86_64 only; arm64 keeps FZ = 0
   const uint32_t frames = process->frames_count;
   if (process->audio_outputs_count == 0) return CLAP_PROCESS_CONTINUE;
@@ -99,10 +118,19 @@ clap_process_status process(const clap_plugin_t*, const clap_process_t* process)
       std::memset(dst, 0, sizeof(float) * frames);
       continue;
     }
-    const float* src = in->data32[channel < in_channels ? channel : in_channels - 1];
-    if (src != nullptr && src != dst) std::memcpy(dst, src, sizeof(float) * frames);
+    const uint32_t source = channel < in_channels ? channel : in_channels - 1;
+    const float* src = in->data32[source];
+    if (src == nullptr) {
+      std::memset(dst, 0, sizeof(float) * frames);
+    } else if (source < 64 && (in->constant_mask & (uint64_t{1} << source)) != 0) {
+      // A constant channel is only valid at its first sample (CLAP audio-buffer.h).
+      if (frames > 0) std::fill(dst, dst + frames, src[0]);
+    } else if (src != dst) {
+      std::memcpy(dst, src, sizeof(float) * frames);
+    }
   }
   out.constant_mask = 0;
+  feedEditor(*self(plugin), out, frames);  // reads the output only
   return CLAP_PROCESS_CONTINUE;
 }
 
@@ -181,6 +209,7 @@ bool guiCreate(const clap_plugin_t* plugin, const char* api, bool is_floating) {
   Instance* instance = self(plugin);
   if (!instance->editor) {
     instance->editor = std::make_unique<Editor>(instance->editor_width, instance->editor_height);
+    instance->editor->setSource(instance->editor_ring.view(), instance->sample_rate);
   }
   return true;
 }
@@ -262,7 +291,12 @@ bool pluginInit(const clap_plugin_t*) { return true; }
 
 void pluginDestroy(const clap_plugin_t* plugin) { delete self(plugin); }
 
-bool pluginActivate(const clap_plugin_t*, double, uint32_t, uint32_t) { return true; }
+bool pluginActivate(const clap_plugin_t* plugin, double sample_rate, uint32_t, uint32_t) {
+  Instance* instance = self(plugin);
+  instance->sample_rate = sample_rate;
+  if (instance->editor) instance->editor->setSource(instance->editor_ring.view(), sample_rate);
+  return true;
+}
 
 void pluginDeactivate(const clap_plugin_t*) {}
 

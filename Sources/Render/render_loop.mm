@@ -70,6 +70,11 @@ void RenderLoop::resize(CGSize drawable_size, CGFloat contents_scale) {
   layer_.drawableSize = drawable_size;
 }
 
+void RenderLoop::whilePaused(void (^work)(void)) {
+  std::lock_guard<std::mutex> lock(frame_mutex_);
+  if (work != nil) work();
+}
+
 void RenderLoop::onUpdate(CAMetalDisplayLinkUpdate* update) {
   std::lock_guard<std::mutex> lock(frame_mutex_);
   FrameTiming timing;

@@ -48,6 +48,8 @@ class RenderLoop {
 
   // Main thread. Serializes drawable-size changes against frame rendering.
   void resize(CGSize drawable_size, CGFloat contents_scale);
+  // Runs `work` between frames (none is being drawn while it runs), on the calling thread.
+  void whilePaused(void (^work)(void));
 
   // Render thread (called by the display-link delegate).
   void onUpdate(CAMetalDisplayLinkUpdate* update);

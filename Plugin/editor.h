@@ -2,6 +2,8 @@
 // Pure C++ interface so plugin.cpp stays free of Objective-C.
 #pragma once
 
+#include <nmr/frame_ring.h>
+
 #include <cstdint>
 #include <memory>
 
@@ -23,6 +25,8 @@ class Editor {
   bool attach(void* parent);
   void setSize(uint32_t width, uint32_t height);
   void setVisible(bool visible);
+  // What the meter shows: the plugin's input (the ring outlives the editor).
+  void setSource(FrameRingView ring, double sample_rate);
   [[nodiscard]] uint32_t width() const noexcept { return width_; }
   [[nodiscard]] uint32_t height() const noexcept { return height_; }
 
