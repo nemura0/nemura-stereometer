@@ -41,6 +41,8 @@ set_string LSApplicationCategoryType public.app-category.music
 set_string NSHumanReadableCopyright "$NMR_COPYRIGHT"
 set_string NSPrincipalClass NSApplication
 set_bool NSHighResolutionCapable YES
+# No Dock icon until the dock_icon setting asks for one. Opening the app again shows the meter.
+set_bool LSUIElement YES
 set_string NSAudioCaptureUsageDescription \
   "$NMR_PRODUCT_NAME reads the audio your Mac is playing to draw the meter. The audio is analyzed on this Mac and is never recorded or sent anywhere."
 plutil -lint "$PLIST" >/dev/null

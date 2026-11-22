@@ -1,0 +1,253 @@
+import AppKit
+import NMRCoreC
+import os
+
+/// The overlay: the meter window, its hover controls and quick menu, and the global hotkeys.
+/// Window settings apply at once; the quick menu (right-click, or the gear) changes them.
+///
+/// The window never activates the app (see OverlayWindow). It can always be brought back:
+/// ⌃⌥⌘H, or opening the app again (Finder, Spotlight), which also turns click-through off.
+@MainActor
+final class OverlayController: NSObject, NSMenuDelegate {
+  let window: OverlayWindow
+  let meter: MeterController
+  private(set) var settings: SettingValues
+  /// After every settings change made here (the quick menu, the hotkeys).
+  var onSettingsChange: ((SettingValues) -> Void)?
+
+  private let controls = HoverControls()
+  private let hotKeys = HotKeys()
+  /// Right-click and the gear; its items are rebuilt each time it opens.
+  let quickMenu = NSMenu()
+  var showsHoverControls: Bool { controls.isEnabled }
+  var registeredHotKeys: Set<HotKeys.Action> { hotKeys.registered }
+  private var content: OverlayContentView?
+  private static let log = Logger(
+    subsystem: Bundle.main.bundleIdentifier ?? "app", category: "overlay")
+
+  /// The window settings the quick menu toggles, in menu order.
+  private static let menuFlags: [SettingKey] = [
+    .alwaysOnTop, .clickThrough, .allSpaces, .hoverControls, .dockIcon,
+  ]
+
+  /// Nil when the meter view cannot be made (no Metal device).
+  init?(settings: SettingValues) {
+    let size = NSSize(square: MeterSize.medium.side)
+    guard let meter = MeterController(size: size, settings: settings) else { return nil }
+    self.meter = meter
+    self.settings = settings
+    window = OverlayWindow(size: size)
+    super.init()
+
+    let content = OverlayContentView(meter: meter.view, controls: controls)
+    content.onHover = { [weak self] inside in self?.hovered(inside) }
+    window.contentView = content
+    self.content = content
+    quickMenu.delegate = self
+    content.menu = quickMenu
+    meter.view.menu = quickMenu
+    controls.onControl = { [weak self] control, button in self?.handle(control, from: button) }
+    apply()
+  }
+
+  /// Shows the window and starts the capture and the hotkeys.
+  func start() {
+    present()
+    meter.startCapture()
+    let clickThrough = hotKeys.register(.toggleClickThrough) { [weak self] in
+      self?.toggle(.clickThrough)
+    }
+    let shown = hotKeys.register(.toggleShown) { [weak self] in self?.toggleShown() }
+    // The quick menu says which shortcut is missing and offers click-through only with its key.
+    if !clickThrough || !shown { Self.log.error("a global hotkey is taken by another app") }
+  }
+
+  /// Opening the app again: shows the window and turns click-through off, so a window the user
+  /// cannot click (or cannot find) always comes back.
+  func reveal() {
+    if settings.flag(.clickThrough) { toggle(.clickThrough) }
+    present()
+  }
+
+  /// Before quitting.
+  func stop() {
+    hotKeys.unregisterAll()
+    meter.stopCapture()
+  }
+
+  func toggle(_ key: SettingKey) {
+    let change = settings.set(key, to: settings.flag(key) ? 0 : 1)
+    guard change != .rejected else {
+      Self.log.error("the setting \(key.rawValue, privacy: .public) was rejected")
+      return
+    }
+    apply()
+    onSettingsChange?(settings)
+  }
+
+  func toggleShown() {
+    if window.isVisible && !window.isMiniaturized { hide() } else { present() }
+  }
+
+  /// In front without activating the app (the user's app keeps the keyboard).
+  private func present() {
+    if window.isMiniaturized { window.deminiaturize(nil) }
+    window.keepOnScreen()
+    window.orderFrontRegardless()
+  }
+
+  private func hide() {
+    hovered(false)
+    window.orderOut(nil)
+  }
+
+  private func hovered(_ inside: Bool) {
+    controls.setShown(inside)
+    content?.showsOutline = inside && !settings.flag(.clickThrough)
+  }
+
+  private var pointerInside: Bool {
+    guard let content, window.isVisible else { return false }
+    let point = content.convert(window.mouseLocationOutsideOfEventStream, from: nil)
+    return content.bounds.contains(point)
+  }
+
+  private func apply() {
+    meter.apply(settings)
+    let style = OverlayStyle(settings)
+    window.apply(style)
+    controls.isEnabled = style.showsHoverControls
+    hovered(pointerInside)  // no mouseEntered comes for a pointer already inside
+    if NSApp.activationPolicy() != style.activationPolicy {
+      if !NSApp.setActivationPolicy(style.activationPolicy) {
+        Self.log.error("the Dock icon setting could not be applied")
+      } else if style.activationPolicy == .regular {
+        NSApp.activate()  // the user asked for the Dock icon: show the app's menu bar with it
+      }
+    }
+  }
+
+  private func handle(_ control: HoverControls.Control, from button: NSView) {
+    switch control {
+    case .close: hide()  // ⌃⌥⌘H or opening the app again brings it back
+    case .minimize:
+      // Without a Dock icon there is no Dock tile to minimize to.
+      if OverlayStyle(settings).minimizes { window.miniaturize(nil) } else { hide() }
+    case .settings:
+      quickMenu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.minY - 4), in: button)
+    }
+  }
+
+  // MARK: - Quick menu
+
+  func menuNeedsUpdate(_ menu: NSMenu) {
+    menu.removeAllItems()
+    menu.autoenablesItems = false
+    let sizes = NSMenu()
+    let current = MeterSize(matching: window.frame.size)
+    for (index, size) in MeterSize.allCases.enumerated() {
+      let item = NSMenuItem(
+        title: "\(size.label) (\(Int(size.side)) pt)", action: #selector(pickSize(_:)),
+        keyEquivalent: "")
+      item.target = self
+      item.tag = index
+      item.state = size == current ? .on : .off
+      sizes.addItem(item)
+    }
+    let sizeItem = NSMenuItem(title: "Size", action: nil, keyEquivalent: "")
+    sizeItem.submenu = sizes
+    menu.addItem(sizeItem)
+    menu.addItem(.separator())
+
+    let missing = HotKeys.Action.allCases.filter { !hotKeys.registered.contains($0) }
+    for key in Self.menuFlags {
+      let item = NSMenuItem(
+        title: Schema.spec(key)?.label ?? key.rawValue, action: #selector(toggleFlag(_:)),
+        keyEquivalent: key == .clickThrough ? HotKeys.Action.toggleClickThrough.keyEquivalent : "")
+      if key == .clickThrough { item.keyEquivalentModifierMask = HotKeys.Action.menuModifiers }
+      item.target = self
+      item.representedObject = key.rawValue
+      item.state = settings.flag(key) ? .on : .off
+      // Without its shortcut nothing could turn click-through off again.
+      if key == .clickThrough && missing.contains(.toggleClickThrough) && !settings.flag(key) {
+        item.isEnabled = false
+      }
+      menu.addItem(item)
+    }
+    for action in missing {
+      let note = NSMenuItem(
+        title: "⌃⌥⌘\(action.keyEquivalent.uppercased()) is in use by another app", action: nil,
+        keyEquivalent: "")
+      note.isEnabled = false
+      menu.addItem(note)
+    }
+    menu.addItem(.separator())
+
+    let hide = NSMenuItem(
+      title: "Hide", action: #selector(hideWindow(_:)),
+      keyEquivalent: HotKeys.Action.toggleShown.keyEquivalent)
+    hide.keyEquivalentModifierMask = HotKeys.Action.menuModifiers
+    hide.target = self
+    menu.addItem(hide)
+    menu.addItem(
+      NSMenuItem(
+        title: "Quit \(String(cString: nmr_product_name()))",
+        action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+  }
+
+  @objc private func pickSize(_ item: NSMenuItem) {
+    guard MeterSize.allCases.indices.contains(item.tag) else { return }
+    window.resize(to: MeterSize.allCases[item.tag])
+  }
+
+  @objc private func toggleFlag(_ item: NSMenuItem) {
+    guard let raw = item.representedObject as? String, let key = SettingKey(rawValue: raw) else {
+      return
+    }
+    toggle(key)
+  }
+
+  @objc private func hideWindow(_ item: NSMenuItem) {
+    hide()
+  }
+}
+
+/// The meter with the hover controls over its top-left corner; reports the pointer entering
+/// and leaving the window.
+@MainActor
+private final class OverlayContentView: NSView {
+  var onHover: ((Bool) -> Void)?
+  /// A faint edge while the pointer is over the window, so its size and edges can be seen.
+  var showsOutline = false {
+    didSet { layer?.borderWidth = showsOutline ? 1 : 0 }
+  }
+
+  init(meter: NSView, controls: HoverControls) {
+    super.init(frame: meter.frame)
+    autoresizesSubviews = true
+    wantsLayer = true
+    layer?.borderColor = NSColor(white: 1, alpha: 0.14).cgColor
+    layer?.cornerRadius = 6
+    meter.frame = bounds
+    meter.autoresizingMask = [.width, .height]
+    addSubview(meter)
+    controls.frame.origin = NSPoint(
+      x: HoverControls.inset, y: bounds.height - HoverControls.inset - controls.frame.height)
+    controls.autoresizingMask = [.maxXMargin, .minYMargin]
+    addSubview(controls)
+    addTrackingArea(
+      NSTrackingArea(
+        rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+        owner: self))
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError("not used") }
+
+  override func mouseEntered(with event: NSEvent) { onHover?(true) }
+  override func mouseExited(with event: NSEvent) { onHover?(false) }
+}
+
+extension NSSize {
+  init(square side: CGFloat) { self.init(width: side, height: side) }
+}

@@ -77,8 +77,13 @@ if [[ "$MODE" == meter ]]; then
       exit 2
       ;;
   esac
+  overlay_ok='.overlay.visible and .overlay.resizes and .overlay.click_through_toggles'
+  if [[ "$(jq -r "$overlay_ok" "$OUT/meter-probe.json")" != "true" ]]; then
+    echo "RESULT: the overlay window did not behave (see .overlay above)"
+    exit 1
+  fi
   if [[ "$(jq -r '.rendering and (.idle | not)' "$OUT/meter-probe.json")" == "true" ]]; then
-    echo "RESULT: the meter draws the captured audio"
+    echo "RESULT: the meter draws the captured audio, and the overlay window behaves"
     exit 0
   fi
   echo "RESULT: the meter is idle (silent capture, or the audio does not reach the view)"

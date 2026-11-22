@@ -56,15 +56,18 @@ Legend: `[x]` done and verified, `[~]` in progress / partially verified, `[ ]` n
 
 - [x] Settings → scene (`meterSettings`), with the NEMURA look (Iris Bloom) in the original mode
       and the NEMURA factory preset
-- [ ] Overlay window: transparent, click-through, all Spaces, hover controls, size presets
+- [x] Overlay window: transparent non-activating panel, click-through, all Spaces and over
+      full-screen apps, hover controls (hide, minimize, quick menu), size presets + free resize,
+      kept on screen, right-click quick menu, global hotkeys ⌃⌥⌘S / ⌃⌥⌘H (checked in-process by
+      `scripts/capture-probe.sh --meter`; the look and the mouse feel are for the owner to try)
 - [x] The app meters the system output: `SystemCapture` follows output-device changes (default
       output, device death, sample rate, tap format; rebuilt off the main thread, a failed start
       retried), only the tap's stream on for the IO proc (an output device with inputs, e.g.
       VB-Cable, does not count as microphone use), `scripts/capture-probe.sh --meter`
 - [ ] Permission flow and silent-buffer detection; capture failures shown in the UI (today they
       are logged: `MeterController.onCaptureChange` has no UI yet)
-- [ ] UI: source picker, menu-bar popover, Settings window, preset import/export, hotkeys,
-      frame-rate setting, `--feed`
+- [ ] UI: source picker, menu-bar popover, Settings window, preset import/export, frame-rate
+      setting, `--feed`; the gear opens Settings once it exists (today: the quick menu)
 
 ## Phase 4: plugin
 

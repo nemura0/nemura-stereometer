@@ -36,18 +36,69 @@ struct MeterProbe: Sendable {
     let rebuilds: UInt64
     let rendering: Bool
     let idle: Bool
+    let overlay: OverlayReport?
     let version: String
   }
 
-  /// The report for `meter` now.
+  /// The overlay window, checked inside the running app: its state, then a resize to a preset
+  /// and two click-through toggles, each undone afterwards.
+  struct OverlayReport: Encodable {
+    let visible: Bool
+    let floating: Bool
+    let allSpaces: Bool
+    let overFullScreen: Bool
+    let clickThrough: Bool
+    let hoverControls: Bool
+    let width: Double
+    let height: Double
+    let menu: [String]
+    let hotKeys: [String]
+    let resizes: Bool
+    let clickThroughToggles: Bool
+
+    @MainActor
+    init(_ overlay: OverlayController) {
+      let window = overlay.window
+      visible = window.isVisible
+      floating = window.level == .floating
+      allSpaces = window.collectionBehavior.contains(.canJoinAllSpaces)
+      overFullScreen = window.collectionBehavior.contains(.fullScreenAuxiliary)
+      clickThrough = window.ignoresMouseEvents
+      hoverControls = overlay.showsHoverControls
+      width = window.frame.width
+      height = window.frame.height
+      overlay.menuNeedsUpdate(overlay.quickMenu)
+      menu = overlay.quickMenu.items.filter { !$0.isSeparatorItem }.map(\.title)
+      hotKeys = HotKeys.Action.allCases.filter { overlay.registeredHotKeys.contains($0) }
+        .map { "⌃⌥⌘" + $0.keyEquivalent.uppercased() }
+
+      let frame = window.frame
+      var resized = NSRect.zero
+      window.withoutSavingFrame {  // the user's saved frame stays as it was
+        window.resize(to: .large)
+        resized = window.frame
+        window.setFrame(frame, display: true)
+      }
+      resizes = MeterSize(matching: resized.size) == .large
+        && abs(resized.midX - frame.midX) < 1 && abs(resized.midY - frame.midY) < 1
+
+      overlay.toggle(.clickThrough)
+      let on = window.ignoresMouseEvents && !overlay.showsHoverControls
+      overlay.toggle(.clickThrough)
+      clickThroughToggles = on && !window.ignoresMouseEvents && overlay.showsHoverControls
+    }
+  }
+
+  /// The report for `overlay` now.
   @MainActor
-  static func report(_ meter: MeterController?) -> Report {
+  static func report(_ overlay: OverlayController?) -> Report {
     let version = String(cString: nmr_version())
-    guard let meter else {
+    guard let overlay else {
       return Report(
         phase: .failed, capturing: false, failedStep: "meter view", status: -1, sampleRate: 0,
-        channels: 0, rebuilds: 0, rendering: false, idle: false, version: version)
+        channels: 0, rebuilds: 0, rendering: false, idle: false, overlay: nil, version: version)
     }
+    let meter = overlay.meter
     var (step, status, rate, channels) = ("", Int32(0), 0.0, 0)
     switch meter.capture.phase {
     case .starting: break
@@ -60,7 +111,7 @@ struct MeterProbe: Sendable {
       phase: phase, capturing: phase == .capturing, failedStep: step, status: status,
       sampleRate: rate, channels: channels, rebuilds: meter.capture.rebuilds,
       rendering: nmr_render_view_is_rendering(view), idle: nmr_render_view_is_idle(view),
-      version: version)
+      overlay: OverlayReport(overlay), version: version)
   }
 
   /// Writes `report` and returns the app's exit code: 0 drawing sound, 1 capturing but silent or

@@ -2,18 +2,15 @@ import AppKit
 import NMRCoreC
 import os
 
-/// A borderless, transparent, floating window showing the meter fed by the system output.
-/// The full overlay (click-through, hover controls, size presets, menu bar) follows in Phase 3.
+/// Runs the overlay meter (App/Overlay) fed by the system output, or the `--meter-probe`.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-  private static let initialSize = NSSize(width: 360, height: 360)
-  private var window: NSWindow?
-  private var meter: MeterController?
+  private var overlay: OverlayController?
   private let probe: MeterProbe?
   private var probeTimerArmed = false
   private var probeDone = false
   private static let log = Logger(
-    subsystem: Bundle.main.bundleIdentifier ?? "app", category: "window")
+    subsystem: Bundle.main.bundleIdentifier ?? "app", category: "app")
 
   init(probe: MeterProbe? = nil) {
     self.probe = probe
@@ -22,35 +19,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     NSApp.mainMenu = makeMainMenu()
-
-    let window = NSWindow(
-      contentRect: NSRect(origin: .zero, size: Self.initialSize),
-      styleMask: [.borderless],
-      backing: .buffered,
-      defer: false
-    )
-    window.isOpaque = false
-    window.backgroundColor = .clear
-    window.hasShadow = false
-    window.level = .floating
-    window.isMovableByWindowBackground = true
-    window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-
-    if let meter = MeterController(size: Self.initialSize, settings: Self.firstSettings) {
-      meter.view.autoresizingMask = [.width, .height]
-      window.contentView = meter.view
-      self.meter = meter
-      if let probe { arm(probe, meter) }
-      meter.startCapture()
-    } else {
+    guard let overlay = OverlayController(settings: Self.firstSettings) else {
       Self.log.error("the meter view could not be made (no Metal device)")
+      if let probe { finish(probe) }
+      return
     }
-    window.center()
-    window.makeKeyAndOrderFront(nil)
-    self.window = window
-    NSApp.activate()
-    if let probe, meter == nil { finish(probe) }
+    self.overlay = overlay
+    if let probe { arm(probe, overlay.meter) }
+    overlay.start()
   }
+
+  func applicationWillTerminate(_ notification: Notification) {
+    overlay?.stop()
+  }
+
+  // The window hides rather than closes; the app quits from the quick menu.
+  func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+    false
+  }
+
+  // Opening the app again (Finder, Spotlight, the Dock) brings the meter back, clickable.
+  func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+    overlay?.reveal()
+    return false
+  }
+
+  /// The NEMURA preset (the original mode) over the defaults. Click-through always starts off:
+  /// a window that ignores the mouse is never the first thing the user sees.
+  private static var firstSettings: SettingValues {
+    var settings = SettingValues()
+    if let nemura = Presets.factory.first(where: { $0.settings.choice(.mode) == "original" }) {
+      settings = settings.applying(nemura.settings)
+    }
+    _ = settings.set(.clickThrough, to: 0)
+    return settings
+  }
+
+  private func makeMainMenu() -> NSMenu {
+    let appMenu = NSMenu()
+    appMenu.addItem(
+      withTitle: "Quit \(String(cString: nmr_product_name()))",
+      action: #selector(NSApplication.terminate(_:)),
+      keyEquivalent: "q"
+    )
+    let appItem = NSMenuItem()
+    appItem.submenu = appMenu
+    let menu = NSMenu()
+    menu.addItem(appItem)
+    return menu
+  }
+
+  // MARK: - Probe
 
   /// The probe's seconds start at the capture's first report; without one in time (the
   /// permission prompt is still open, say) it reports what it has.
@@ -77,41 +96,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private func finish(_ probe: MeterProbe) {
     guard !probeDone else { return }
     probeDone = true
-    let report = MeterProbe.report(meter)
+    let report = MeterProbe.report(overlay)
     let code = MeterProbe.write(report, to: probe.outputPath)
     // Still starting: the capture queue may be inside the permission prompt, and stopping would
     // wait for it. Exiting takes the private tap and aggregate down with the process.
-    if report.phase != .starting { meter?.stopCapture() }
+    if report.phase != .starting { overlay?.stop() }
     exit(code)
-  }
-
-  func applicationWillTerminate(_ notification: Notification) {
-    meter?.stopCapture()
-  }
-
-  /// The NEMURA preset (the original mode) over the defaults.
-  private static var firstSettings: SettingValues {
-    let base = SettingValues()
-    guard let nemura = Presets.factory.first(where: { $0.settings.choice(.mode) == "original" })
-    else { return base }
-    return base.applying(nemura.settings)
-  }
-
-  func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-    true
-  }
-
-  private func makeMainMenu() -> NSMenu {
-    let appMenu = NSMenu()
-    appMenu.addItem(
-      withTitle: "Quit \(String(cString: nmr_product_name()))",
-      action: #selector(NSApplication.terminate(_:)),
-      keyEquivalent: "q"
-    )
-    let appItem = NSMenuItem()
-    appItem.submenu = appMenu
-    let menu = NSMenu()
-    menu.addItem(appItem)
-    return menu
   }
 }
