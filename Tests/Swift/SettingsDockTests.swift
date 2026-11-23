@@ -41,9 +41,9 @@ struct SettingsDockTests {
   func attached() throws {
     let meter = OverlayWindow(size: NSSize(width: 360, height: 360), remembersFrame: false)
     meter.level = .floating
-    meter.setFrameOrigin(NSPoint(x: 400, y: 500))
-    meter.orderFrontRegardless()
+    meter.orderFrontRegardless()  // centered on the screen, whatever its size (CI's is small)
     defer { meter.close() }
+    let visible = try #require(meter.screen?.visibleFrame)
     let settings = SettingsWindow(model: SettingsModel(store: SettingsStore(defaults: nil)))
     settings.show(attachedTo: meter)
     defer { settings.close() }
@@ -51,12 +51,13 @@ struct SettingsDockTests {
     #expect(meter.childWindows?.contains(panel) == true)
     #expect(panel.level == meter.level)
     #expect(panel.isVisible)
-    #expect(panel.frame.maxY == meter.frame.minY)
+    let docked = SettingsWindow.dockedFrame(for: panel.frame.size, at: meter.frame, in: visible)
+    #expect(panel.frame == docked)
     #expect(panel.frame.midX == meter.frame.midX)
 
     let before = panel.frame.origin
-    meter.setFrameOrigin(NSPoint(x: meter.frame.minX + 50, y: meter.frame.minY + 20))
-    #expect(panel.frame.origin == NSPoint(x: before.x + 50, y: before.y + 20))
+    meter.setFrameOrigin(NSPoint(x: meter.frame.minX + 50, y: meter.frame.minY))
+    #expect(panel.frame.origin == NSPoint(x: before.x + 50, y: before.y))
 
     meter.level = .normal  // always on top turned off
     settings.follow()
