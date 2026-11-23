@@ -82,6 +82,21 @@ struct OverlayTests {
     #expect(big.fitted(into: screen) == NSRect(x: 0, y: 25, width: 600, height: 500))
   }
 
+  @Test("Opening the app again brings back a meter that was hidden")
+  func reopenShowsHidden() throws {
+    let overlay = try #require(OverlayController(settings: SettingValues()))
+    defer { overlay.stop() }
+    overlay.window.withoutSavingFrame {
+      overlay.toggleShown()  // shown
+      #expect(overlay.window.isVisible)
+      overlay.toggleShown()  // hidden, as the close button does
+      #expect(!overlay.window.isVisible)
+      overlay.reveal()
+      #expect(overlay.window.isVisible)
+      overlay.window.orderOut(nil)
+    }
+  }
+
   @Test("Without a Dock icon, minimize hides the window (there is no Dock tile to go to)")
   func minimizeWithoutDock() {
     #expect(OverlayStyle(SettingValues()).minimizes == false)

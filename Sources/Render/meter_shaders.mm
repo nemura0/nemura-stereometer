@@ -23,7 +23,7 @@ struct ScopeUniforms {
   uint count;
   uint shape;
   uint solid;
-  uint pad;
+  float soft_edge_px;  // a soft dot's edge, at most
 };
 
 struct CompositeUniforms {
@@ -153,31 +153,50 @@ vertex ImageVertex fullscreen_vertex(uint vid [[vertex_id]]) {
 // Blended with the blend color as the destination factor: light × decay.
 fragment float4 decay_fragment(ImageVertex in [[stage_in]]) { return float4(0.0); }
 
-// Instance i: the (i % density + 1)-th of `density` points between samples s − 1 and s, with
-// s = 1 + i / density (point 0 is the previous frame's last sample).
+// Instance i: point i % density of sample 1 + i / density, on the way from the sample before
+// (point 0 is the previous frame's last sample).
+// Density fills gaps: a sample closer to the one before than a dot's radius gets one point, one
+// further gets one per radius of the way (at most density), and the points it does not draw
+// give their light to the ones it does, so the image keeps its light and stays sharp.
 vertex DotVertex dot_vertex(uint vid [[vertex_id]], uint iid [[instance_id]],
                             device const float4* points [[buffer(0)]],
                             constant ScopeUniforms& u [[buffer(1)]],
                             constant uchar4* map [[buffer(2)]]) {
   const uint s = 1 + iid / u.density;
-  const float f = float(iid % u.density + 1) / float(u.density);
+  const uint k = iid % u.density;
   const float4 a = points[s - 1];
   const float4 b = points[s];
+  const float2 from = lightPixel(a.xy, u);
+  const float2 to = lightPixel(b.xy, u);
   DotVertex out;
-  out.center = lightPixel(mix(a.xy, b.xy, f), u);
   out.radius = max(u.size_px * 0.5, 0.5);
-  // Soft dots fade past their radius (to 0.4 % at 1.5 r): the quad reaches that far.
-  const float extent = (u.shape == 0 ? 1.5 * out.radius : out.radius) + 1.0;
-  out.position = pixelToClip(out.center + quadCorner(vid) * extent, u.target_size);
-  out.color = float4(mapColor(mix(a.z, b.z, f), u, map) * u.intensity, u.intensity);
+  const float steps = ceil(length(to - from) / out.radius);
+  const uint drawn = uint(clamp(isfinite(steps) ? steps : 1.0, 1.0, float(u.density)));
+  if (k >= drawn) {  // not needed: no area, nothing drawn
+    out.position = float4(0, 0, 0, 1);
+    out.center = 0;
+    out.color = 0;
+    return out;
+  }
+  const float f = float(k + 1) / float(drawn);
+  out.center = mix(from, to, f);
+  // Soft dots end at their radius, like the others: the quad reaches a pixel past it.
+  out.position = pixelToClip(out.center + quadCorner(vid) * (out.radius + 1.0), u.target_size);
+  const float share = float(u.density) / float(drawn) * u.intensity;
+  out.color = float4(mapColor(mix(a.z, b.z, f), u, map) * share, share);
   return out;
 }
 
 fragment float4 dot_fragment(DotVertex in [[stage_in]], constant ScopeUniforms& u [[buffer(1)]]) {
   const float2 d = in.position.xy - in.center;
   float coverage;
-  if (u.shape == 0) {  // soft
-    coverage = exp(-2.5 * dot(d, d) / (in.radius * in.radius));
+  if (u.shape == 0) {  // soft: full in the middle, fading smoothly to nothing half a pixel past
+    // the radius (as the circle's antialiasing does) over the outer soft_edge_px (all of it for
+    // small dots), so a bigger dot is a bigger bead and the smallest still lights a pixel
+    const float outer = in.radius + 0.5;
+    const float edge = clamp(u.soft_edge_px, 0.5, outer);
+    const float t = max(length(d) - (outer - edge), 0.0) / edge;
+    coverage = pow(saturate(1.0 - t * t), 1.5);
   } else if (u.shape == 1) {  // circle
     coverage = saturate(in.radius + 0.5 - length(d));
   } else {  // square

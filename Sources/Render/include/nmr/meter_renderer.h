@@ -3,8 +3,10 @@
 // The scope accumulates light in an rgba16Float texture: the layout's scope rect and
 // kLightBleedPt around it (within the target), so dots and glow near the scope's edges go on
 // past them. Each frame first fades it by the style's decay (a blend with a constant, no
-// read-back), then adds the frame's new points: instanced quads (soft, circle or square dots,
-// with `density` points interpolated per sample in the vertex shader) or antialiased segments
+// read-back), then adds the frame's new points: instanced quads (soft, circle or square dots;
+// a soft dot fades out over at most kSoftEdgePt at its edge; `density` points per sample are
+// drawn only where the gap to the sample before needs them, one per dot radius, the rest of the
+// sample's light going to those) or antialiased segments
 // joining consecutive samples, the first from the last point of the previous frame. Full scale
 // (±1) is kFullScale of the scope's half size. The composite pass clears the target to the
 // background, draws the guides, the tone-mapped light (premultiplied, so a transparent
@@ -83,10 +85,12 @@ class MeterRenderer {
   static constexpr float kWhiten = kDefaultWhiten;  // and hot light turning white
   static constexpr float kMaxWhiten = 1;
   static constexpr float kGuidePt = 1;      // guide thickness
+  static constexpr float kSoftEdgePt = 2;  // a soft dot fades out over at most this of its radius
   static constexpr uint32_t kGlowTexelPt = 4;  // the bloom's texel, in points (whole pixels)
   static constexpr uint32_t kMaxGlowDivisor = 16;  // its texel at most, in pixels
-  // The halo at glow 1: kGlowCeiling × (1 − exp(−blurred light × kGlowGain)).
-  static constexpr float kGlowGain = 8;
+  // The halo at glow 1: kGlowCeiling × (1 − exp(−blurred light × kGlowGain)). The trace's own
+  // gain, so the halo is a share of the light around it: faint over a dim cloud, never a haze.
+  static constexpr float kGlowGain = kToneGain;
   static constexpr float kGlowCeiling = 0.5f;
   static constexpr float kLightBleedPt = 24;  // light kept past the scope (the glow's reach)
   static constexpr float kEdgeFadePt = 4;     // the light fades out over this to its edges
@@ -116,7 +120,8 @@ class MeterRenderer {
   bool ensureGlow(uint32_t divisor);
   void placeLight(id<MTLTexture> target, float scale, float size_px);
   void encodeGlow(id<MTLCommandBuffer> commands);
-  void encodeScope(id<MTLCommandBuffer> commands, id<MTLBuffer> slot, const MeterFrame& frame);
+  void encodeScope(id<MTLCommandBuffer> commands, id<MTLBuffer> slot, const MeterFrame& frame,
+                   float scale);
   void encodeComposite(id<MTLCommandBuffer> commands, id<MTLTexture> target, id<MTLBuffer> slot,
                        const MeterFrame& frame, float scale, float glow);
   void encodeReadouts(id<MTLRenderCommandEncoder> encoder, id<MTLBuffer> slot,

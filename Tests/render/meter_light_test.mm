@@ -41,8 +41,8 @@ TEST_CASE("meter light: past the scope's edges it fades, never stopping at a lin
       CAPTURE(glow);
       CAPTURE(e.at.x);
       CAPTURE(e.at.y);
-      // At glow 0, a dot exactly on the edge; with glow, one just inside it.
-      const float reach = glow > 0 ? 1.0f : 1.0f / MeterRenderer::kFullScale;
+      // A dot exactly on the edge: unclipped, its light is the same on both sides of it.
+      const float reach = 1.0f / MeterRenderer::kFullScale;
       const std::vector<ScopePoint> spot(64, ScopePoint{e.at.x * reach, e.at.y * reach});
       MeterFrame f = spotFrame(h, spot, glow);
       f.style.size_px = 6;

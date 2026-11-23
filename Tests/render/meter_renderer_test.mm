@@ -97,7 +97,7 @@ TEST_CASE("meter renderer: lines and soft dots are antialiased, not boxes") {
   CHECK(h.pixel(x, row - 1).peak() > 0.1f);
   CHECK(h.pixel(x, row + 1).peak() < 0.02f);
   CHECK(h.pixel(x, row - 2).peak() < 0.02f);
-  // A soft 8 px dot: 3 px from its center it has faded to a small part of its peak.
+  // A soft 8 px dot: round, not a box (dim at its box's corner), fading out at its edge.
   const std::vector<ScopePoint> dot{{0, h.scopeY(row + 0.5f)}};
   f.draw = DrawStyle::kDots;
   f.style.size_px = 8;
@@ -107,7 +107,12 @@ TEST_CASE("meter renderer: lines and soft dots are antialiased, not boxes") {
   REQUIRE(h.render(f));
   const float center = h.pixel(x, row).peak();
   CHECK(center > 0.2f);
-  CHECK(h.pixel(x + 3, row).peak() < 0.4f * center);
+  const float edge = h.pixel(x + 3, row).peak();  // 3.5 px out, inside its edge: fading
+  INFO(center << " → " << edge);
+  CHECK(edge > 0.02f);
+  CHECK(edge < 0.95f * center);
+  CHECK(h.pixel(x + 3, row + 3).peak() < 0.3f * center);  // a box's corner, 4.6 px out
+  CHECK(h.pixel(x + 5, row).peak() < 0.02f);              // and nothing past the edge
 }
 
 TEST_CASE("meter renderer: the trail fades by the decay, and clear forgets it") {
@@ -395,13 +400,16 @@ TEST_CASE("meter renderer: glow spreads the same distance in points at any scale
   REQUIRE_GPU(h);
   const std::vector<ScopePoint> spot(64, ScopePoint{0.3f, -0.2f});
   REQUIRE(h.render(spotFrame(h, spot, 1), 1));
-  const auto one = around(h, spot[0], 24);
+  const auto one = around(h, spot[0], 6);  // 6 pt at scale 1…
+  const auto far = around(h, spot[0], 24);
   REQUIRE(h.render(spotFrame(h, spot, 1), 2));
-  const auto two = around(h, spot[0], 24);  // 12 pt at scale 2, 24 pt at scale 1
+  const auto two = around(h, spot[0], 12);  // …and at scale 2
   for (size_t i = 0; i < one.size(); ++i) {
     CAPTURE(i);
-    CHECK(one[i] < 0.01f);
-    CHECK(two[i] > 0.015f);
+    INFO(one[i] << " vs " << two[i]);
+    CHECK(one[i] > 0.05f);
+    CHECK(two[i] == doctest::Approx(one[i]).epsilon(0.25));
+    CHECK(far[i] < 0.01f);  // 24 pt out it is gone
   }
 }
 

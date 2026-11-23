@@ -125,6 +125,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   // Opening the app again (Finder, Spotlight, the Dock) brings the meter back, clickable.
   func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+    Self.log.info("Opened again: showing the meter")
     overlay?.reveal()
     return false
   }

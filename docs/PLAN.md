@@ -105,6 +105,9 @@ Legend: `[x]` done and verified, `[~]` in progress / partially verified, `[ ]` n
       its text, names or assets)
 - Fixed 2026-11-23 (DECISIONS: light bleed and edge fade, glow halo, Settings panel); waiting
   for the owner's look on screen before Phase 4
+- [x] Still blurry on screen (point 5.9 pt, density 5, glow 65 %): sharp soft dots, density only
+      where there is a gap, a halo that follows the trace (DECISIONS: sharp dots)
+- [x] Maximize and restore by double-clicking the meter's top edge (DECISIONS: fill the screen)
 
 ## Phase 4: plugin
 
