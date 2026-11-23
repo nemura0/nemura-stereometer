@@ -53,7 +53,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     self.menuBar = menuBar
     let settingsWindow = SettingsWindow(model: SettingsModel(store: store))
     self.settingsWindow = settingsWindow
-    let showSettings: () -> Void = { [weak self] in self?.settingsWindow?.show() }
+    let showSettings: () -> Void = { [weak self] in self?.showSettingsPanel() }
+    // After the overlay's observer: the panel takes the meter's new level and Spaces.
+    store.observe { [weak settingsWindow] _ in settingsWindow?.follow() }
     menuBar.onShowSettings = showSettings
     overlay.onShowSettings = showSettings
     let sources = SourceController(overlay: overlay, model: menuBar.model, sources: PluginSources())
@@ -175,7 +177,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   @objc private func showSettings(_ sender: Any?) {
-    settingsWindow?.show()
+    showSettingsPanel()
+  }
+
+  private func showSettingsPanel() {
+    settingsWindow?.show(attachedTo: overlay?.window)
   }
 
   // MARK: - Probe

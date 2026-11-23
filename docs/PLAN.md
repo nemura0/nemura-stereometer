@@ -89,20 +89,22 @@ Legend: `[x]` done and verified, `[~]` in progress / partially verified, `[ ]` n
 
 ### Owner feedback, 2026-11-22 (fix before Phase 4; work resumes when the owner says "retomar")
 
-- [ ] Square cuts at the meter's top and bottom edges: the trace's glow ends in a straight
+- [x] Square cuts at the meter's top and bottom edges: the trace's glow ends in a straight
       horizontal line, as if the image were clipped to a box (seen in the half modes at the top and
       bottom of the vertical trace). Nothing may end in a hard edge: find what clips (the draw
       area, the trail/accumulation texture, the scissor or viewport, the half-plane mask) and make
       the glow fade out instead
-- [ ] Quality drops as density, glow and other settings go up: the meter turns blurry and
+- [x] Quality drops as density, glow and other settings go up: the meter turns blurry and
       blown-out, "like 144p". Check the resolution of the offscreen textures (backing scale,
       drawable size vs. accumulation size), how the glow blur is sized, and the clipping or
       saturation of bright cores; it must stay sharp at every setting
-- [ ] Settings open behind the meter: the user has to click elsewhere or move the meter to reach
+- [x] Settings open behind the meter: the user has to click elsewhere or move the meter to reach
       them. Settings must open over the meter, attached to it, like MiniMeters' settings panel
       (a panel docked to the meter window, not a separate window that falls behind). Reference
       screenshot from the owner: MiniMeters' in-window settings (layout idea only; copy none of
       its text, names or assets)
+- Fixed 2026-11-23 (DECISIONS: light bleed and edge fade, glow halo, Settings panel); waiting
+  for the owner's look on screen before Phase 4
 
 ## Phase 4: plugin
 

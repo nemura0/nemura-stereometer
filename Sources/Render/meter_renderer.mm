@@ -16,6 +16,7 @@ namespace {
 // Mirrors of the MSL structs in meter_shaders.mm.
 struct ScopeUniforms {
   simd_float4 solid_color;
+  simd_float4 scope;  // in the light texture's pixels
   simd_float2 target_size;
   float full_scale;
   float size_px;
@@ -28,20 +29,25 @@ struct ScopeUniforms {
   uint32_t solid;
   uint32_t pad;
 };
-static_assert(sizeof(ScopeUniforms) == 64);
+static_assert(sizeof(ScopeUniforms) == 80);
 
 struct CompositeUniforms {
   simd_float4 scope_rect;
+  simd_float4 light_rect;
   simd_float2 target_size;
   float full_scale;
   float tone_gain;
   float whiten;
   float guide_px;
-  float glow;          // the light added from the bloom, × its blurred light
-  float glow_divisor;  // scope pixels per bloom texel
+  float glow;          // 0 … 1: the halo's amount
+  float glow_divisor;  // light pixels per bloom texel
   simd_float4 glow_color;
+  float glow_gain;
+  float glow_ceiling;
+  float edge_fade_px;
+  float pad;
 };
-static_assert(sizeof(CompositeUniforms) == 64);
+static_assert(sizeof(CompositeUniforms) == 96);
 
 struct GpuSegment {
   simd_float2 a;
@@ -176,7 +182,15 @@ MeterRenderer::MeterRenderer(id<MTLDevice> device, MTLPixelFormat target_format)
 void MeterRenderer::setColormap(const colormap::Table& table) noexcept { colormap_ = table; }
 
 bool MeterRenderer::ensureScope(uint32_t width, uint32_t height) {
-  if (scope_ != nil && scope_.width == width && scope_.height == height) return true;
+  // The scope's place in the light: where the target clips the bleed it can move inside a
+  // texture of the same size, and the trail would shift with it.
+  const Rect offset{scope_rect_.x - light_rect_.x, scope_rect_.y - light_rect_.y, 0, 0};
+  const bool moved = offset.x != scope_offset_.x || offset.y != scope_offset_.y;
+  scope_offset_ = offset;
+  if (scope_ != nil && scope_.width == width && scope_.height == height) {
+    scope_clear_ = scope_clear_ || moved;
+    return true;
+  }
   scope_ = lightTexture(device_, width, height);
   scope_clear_ = true;
   return scope_ != nil;
@@ -248,10 +262,12 @@ bool MeterRenderer::encode(id<MTLCommandBuffer> commands, id<MTLTexture> target,
   const float y = std::round(s.y);
   scope_rect_ = {x, y, std::round(s.x + s.width) - x, std::round(s.y + s.height) - y};
   const float px = std::isfinite(scale) && scale > 0 ? scale : 1;
-  float glow = std::isfinite(frame.glow) ? std::clamp(frame.glow, 0.0f, 1.0f) * kGlowGain : 0.0f;
-  if (scope_rect_.width >= 1 && scope_rect_.height >= 1 &&
-      ensureScope(static_cast<uint32_t>(scope_rect_.width),
-                  static_cast<uint32_t>(scope_rect_.height))) {
+  placeLight(target, px, frame.style.size_px);
+  float glow = std::isfinite(frame.glow) ? std::clamp(frame.glow, 0.0f, 1.0f) : 0.0f;
+  if (scope_rect_.width >= 1 && scope_rect_.height >= 1 && light_rect_.width >= 1 &&
+      light_rect_.height >= 1 &&
+      ensureScope(static_cast<uint32_t>(light_rect_.width),
+                  static_cast<uint32_t>(light_rect_.height))) {
     encodeScope(commands, slot, frame);
     // The bloom's texel stays kGlowTexelPt points wide, so it spreads as far at any scale.
     const auto divisor = static_cast<uint32_t>(
@@ -268,15 +284,33 @@ bool MeterRenderer::encode(id<MTLCommandBuffer> commands, id<MTLTexture> target,
   return true;
 }
 
+// The light texture's place: the scope, and room for the glow and the dots past its edges,
+// within the target.
+void MeterRenderer::placeLight(id<MTLTexture> target, float scale, float size_px) {
+  const float size = std::isfinite(size_px) ? std::clamp(size_px, 0.0f, ScopeExposure::kMaxSizePx)
+                                            : 0.0f;
+  // In steps of kBleedStepPx, so dragging the point size does not make a new texture (and a new
+  // trail) at every step.
+  const float bleed = std::ceil((kLightBleedPt * scale + size) / kBleedStepPx) * kBleedStepPx;
+  const float x0 = std::max(scope_rect_.x - bleed, 0.0f);
+  const float y0 = std::max(scope_rect_.y - bleed, 0.0f);
+  const float x1 = std::min(scope_rect_.x + scope_rect_.width + bleed,
+                            static_cast<float>(target.width));
+  const float y1 = std::min(scope_rect_.y + scope_rect_.height + bleed,
+                            static_cast<float>(target.height));
+  light_rect_ = {x0, y0, std::max(x1 - x0, 0.0f), std::max(y1 - y0, 0.0f)};
+}
+
 void MeterRenderer::encodeScope(id<MTLCommandBuffer> commands, id<MTLBuffer> slot,
                                 const MeterFrame& frame) {
   const bool clear = pending_clear_ || scope_clear_;
   scope_clear_ = false;
+  if (clear) has_previous_ = false;  // a new trail joins nothing to the last one
   // Points: the previous frame's last sample, then the newest kMaxPoints of this frame's (not
   // joined across the ones left out).
   const size_t available = std::min(frame.points.size(), size_t{kMaxPoints});
   const size_t skipped = frame.points.size() - available;
-  if (pending_clear_ || skipped > 0) has_previous_ = false;
+  if (skipped > 0) has_previous_ = false;
   pending_clear_ = false;
   auto* points = static_cast<simd_float4*>(slot.contents);
   for (size_t i = 0; i < available; ++i) {
@@ -309,7 +343,9 @@ void MeterRenderer::encodeScope(id<MTLCommandBuffer> commands, id<MTLBuffer> slo
     ScopeUniforms u{};
     const std::array<float, 3>& solid = frame.look.solid_color;
     u.solid_color = simd_make_float4(solid[0], solid[1], solid[2], 1);
-    u.target_size = simd_make_float2(scope_rect_.width, scope_rect_.height);
+    u.scope = simd_make_float4(scope_rect_.x - light_rect_.x, scope_rect_.y - light_rect_.y,
+                               scope_rect_.width, scope_rect_.height);
+    u.target_size = simd_make_float2(light_rect_.width, light_rect_.height);
     u.full_scale = kFullScale;
     u.size_px = frame.style.size_px;
     u.intensity = frame.style.intensity;
@@ -348,6 +384,8 @@ void MeterRenderer::encodeComposite(id<MTLCommandBuffer> commands, id<MTLTexture
   CompositeUniforms u{};
   u.scope_rect = simd_make_float4(scope_rect_.x, scope_rect_.y, scope_rect_.width,
                                   scope_rect_.height);
+  u.light_rect = simd_make_float4(light_rect_.x, light_rect_.y, light_rect_.width,
+                                  light_rect_.height);
   u.target_size = simd_make_float2(target.width, target.height);
   u.full_scale = kFullScale;
   u.tone_gain = kToneGain;
@@ -356,12 +394,16 @@ void MeterRenderer::encodeComposite(id<MTLCommandBuffer> commands, id<MTLTexture
   u.guide_px = kGuidePt * scale;
   u.glow = glow;
   u.glow_divisor = static_cast<float>(glow_divisor_);
+  u.glow_gain = kGlowGain;
+  u.glow_ceiling = kGlowCeiling;
+  u.edge_fade_px = kEdgeFadePt * scale;
   const auto& gc = frame.look.glow_color;
   const auto channel = [](float v) { return std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 1; };
   u.glow_color = simd_make_float4(channel(gc[0]), channel(gc[1]), channel(gc[2]), 0);
   [encoder setVertexBytes:&u length:sizeof(u) atIndex:1];
   [encoder setFragmentBytes:&u length:sizeof(u) atIndex:1];
-  const bool has_scope = scope_rect_.width >= 1 && scope_rect_.height >= 1 && scope_ != nil;
+  const bool has_scope = scope_rect_.width >= 1 && scope_rect_.height >= 1 &&
+                         light_rect_.width >= 1 && light_rect_.height >= 1 && scope_ != nil;
 
   uint32_t segments = 0;
   if (frame.guides != nullptr && has_scope) {

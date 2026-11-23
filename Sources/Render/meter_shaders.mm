@@ -12,6 +12,7 @@ const char* meterShaderSource() noexcept {
 
 struct ScopeUniforms {
   float4 solid_color;
+  float4 scope;  // x, y, width, height in the light texture's pixels
   float2 target_size;
   float full_scale;
   float size_px;
@@ -27,14 +28,19 @@ struct ScopeUniforms {
 
 struct CompositeUniforms {
   float4 scope_rect;  // x, y, width, height in target pixels
+  float4 light_rect;  // the light texture's place, in target pixels
   float2 target_size;
   float full_scale;
   float tone_gain;
   float whiten;
   float guide_px;
   float glow;
-  float glow_divisor;  // scope pixels per bloom texel
-  float4 glow_color;   // its light is multiplied by this
+  float glow_divisor;  // light pixels per bloom texel
+  float4 glow_color;   // the halo's color
+  float glow_gain;
+  float glow_ceiling;
+  float edge_fade_px;
+  float pad;
 };
 
 struct GuideSegment {
@@ -89,6 +95,11 @@ struct GlyphVertex {
 // A point of the scope (±1 at full scale, Y up) in the pixels of a rect `size` wide (Y down).
 static float2 scopePixel(float2 p, float2 size, float full_scale) {
   return float2(0.5 + 0.5 * full_scale * p.x, 0.5 - 0.5 * full_scale * p.y) * size;
+}
+
+// The same, in the light texture: the scope sits at u.scope in it.
+static float2 lightPixel(float2 p, constant ScopeUniforms& u) {
+  return u.scope.xy + scopePixel(p, u.scope.zw, u.full_scale);
 }
 
 static float4 pixelToClip(float2 px, float2 size) {
@@ -153,7 +164,7 @@ vertex DotVertex dot_vertex(uint vid [[vertex_id]], uint iid [[instance_id]],
   const float4 a = points[s - 1];
   const float4 b = points[s];
   DotVertex out;
-  out.center = scopePixel(mix(a.xy, b.xy, f), u.target_size, u.full_scale);
+  out.center = lightPixel(mix(a.xy, b.xy, f), u);
   out.radius = max(u.size_px * 0.5, 0.5);
   // Soft dots fade past their radius (to 0.4 % at 1.5 r): the quad reaches that far.
   const float extent = (u.shape == 0 ? 1.5 * out.radius : out.radius) + 1.0;
@@ -183,8 +194,7 @@ vertex SegmentVertex trace_vertex(uint vid [[vertex_id]], uint iid [[instance_id
   const float4 a = points[iid];
   const float4 b = points[iid + 1];
   const float3 rgb = mapColor(0.5 * (a.z + b.z), u, map) * u.intensity;
-  return segmentQuad(vid, scopePixel(a.xy, u.target_size, u.full_scale),
-                     scopePixel(b.xy, u.target_size, u.full_scale), max(u.size_px * 0.5, 0.5),
+  return segmentQuad(vid, lightPixel(a.xy, u), lightPixel(b.xy, u), max(u.size_px * 0.5, 0.5),
                      float4(rgb, u.intensity), u.target_size);
 }
 
@@ -212,36 +222,43 @@ vertex ImageVertex image_vertex(uint vid [[vertex_id]],
                                 constant CompositeUniforms& u [[buffer(1)]]) {
   const float2 corner = 0.5 * (quadCorner(vid) + 1.0);
   ImageVertex out;
-  out.position = pixelToClip(u.scope_rect.xy + corner * u.scope_rect.zw, u.target_size);
+  out.position = pixelToClip(u.light_rect.xy + corner * u.light_rect.zw, u.target_size);
   return out;
 }
 
 // Light to color: 1 − exp(−light × gain) per channel, and the hottest light turning white.
-// Premultiplied, with alpha the brightest channel, so over a transparent background only the
-// light shows.
+// The glow's halo comes after, screened over the trace and at most glow_ceiling of white, so
+// the trace keeps its shape inside it. Premultiplied, with alpha the brightest channel, so over
+// a transparent background only the light shows; and fading out near the light's edges.
 fragment float4 image_fragment(ImageVertex in [[stage_in]],
                                constant CompositeUniforms& u [[buffer(1)]],
                                texture2d<float, access::read> light [[texture(0)]],
                                texture2d<float> glow [[texture(1)]]) {
   const uint2 size = uint2(light.get_width(), light.get_height());
-  const float2 local = max(in.position.xy - u.scope_rect.xy, 0.0);
+  const float2 local = max(in.position.xy - u.light_rect.xy, 0.0);
   const uint2 coord = min(uint2(local), size - 1);
-  float3 c = finiteLight(light.read(coord).rgb);
-  if (u.glow > 0.0) {
-    constexpr sampler linear(filter::linear, address::clamp_to_edge);
-    // The bloom's texels cover glow_divisor pixels each, up to a little past the scope.
-    const float2 covered = float2(glow.get_width(), glow.get_height()) * u.glow_divisor;
-    c += u.glow * u.glow_color.rgb * max(glow.sample(linear, local / covered).rgb, 0.0);
-  }
+  const float3 c = finiteLight(light.read(coord).rgb);
   const float3 m = 1.0 - exp(-c * u.tone_gain);
   const float white = 1.0 - exp(-(c.r + c.g + c.b) * u.tone_gain * u.whiten);
-  const float3 rgb = m + (1.0 - m) * white;
-  return float4(rgb, max(rgb.r, max(rgb.g, rgb.b)));
+  float3 rgb = m + (1.0 - m) * white;
+  if (u.glow > 0.0) {
+    constexpr sampler linear(filter::linear, address::clamp_to_edge);
+    // The bloom's texels cover glow_divisor pixels each, up to a little past the light.
+    const float2 covered = float2(glow.get_width(), glow.get_height()) * u.glow_divisor;
+    const float3 bloom = max(glow.sample(linear, local / covered).rgb, 0.0);
+    const float3 halo = u.glow * u.glow_ceiling * u.glow_color.rgb *
+                        (1.0 - exp(-bloom * u.glow_gain));
+    rgb += (1.0 - rgb) * halo;
+  }
+  // From the outermost pixels' centers: they are dark.
+  const float2 inside = min(local, u.light_rect.zw - local) - 0.5;
+  const float fade = smoothstep(0.0, max(u.edge_fade_px, 1e-3), min(inside.x, inside.y));
+  return float4(rgb, max(rgb.r, max(rgb.g, rgb.b))) * fade;
 }
 
 // The bloom, at kGlowTexelPt points per texel: each texel averages its divisor × divisor
-// pixels (those inside the scope; a NaN or infinite one counts as dark, so a bad pixel cannot
-// spread), then a 9-tap Gaussian (σ ≈ 2 texels, as 5 linear taps) runs across and down.
+// pixels (those inside the light texture; a NaN or infinite one counts as dark, so a bad pixel
+// cannot spread), then a 9-tap Gaussian (σ ≈ 2 texels, as 5 linear taps) runs across and down.
 fragment float4 glow_down_fragment(ImageVertex in [[stage_in]],
                                    constant uint& divisor [[buffer(0)]],
                                    texture2d<float, access::read> light [[texture(0)]]) {

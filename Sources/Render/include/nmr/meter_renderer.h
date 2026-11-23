@@ -1,13 +1,16 @@
 // The meter's Metal renderer: the scope's trail, its guides and the meter bars.
 //
-// The scope accumulates light in an rgba16Float texture the size of the layout's scope rect.
-// Each frame first fades it by the style's decay (a blend with a constant, no read-back), then
-// adds the frame's new points: instanced quads (soft, circle or square dots, with `density`
-// points interpolated per sample in the vertex shader) or antialiased segments joining
-// consecutive samples, the first from the last point of the previous frame. Full scale (±1) is
-// kFullScale of the scope's half size. The composite pass clears the target to the background,
-// draws the guides, the tone-mapped scope (premultiplied, so a transparent background shows only
-// the light) and the meter bars.
+// The scope accumulates light in an rgba16Float texture: the layout's scope rect and
+// kLightBleedPt around it (within the target), so dots and glow near the scope's edges go on
+// past them. Each frame first fades it by the style's decay (a blend with a constant, no
+// read-back), then adds the frame's new points: instanced quads (soft, circle or square dots,
+// with `density` points interpolated per sample in the vertex shader) or antialiased segments
+// joining consecutive samples, the first from the last point of the previous frame. Full scale
+// (±1) is kFullScale of the scope's half size. The composite pass clears the target to the
+// background, draws the guides, the tone-mapped light (premultiplied, so a transparent
+// background shows only the light; fading out over kEdgeFadePt to the light's edges, so it never
+// ends in a line) and the meter bars. The glow is a halo added after the trace's tone mapping,
+// at most kGlowCeiling of white, so the trace stays sharp inside it at any amount.
 //
 // Render thread only. Encoding never blocks: with kFramesInFlight frames still on the GPU it
 // skips the frame. Per-frame data goes into one of kFramesInFlight preallocated shared buffers,
@@ -82,7 +85,12 @@ class MeterRenderer {
   static constexpr float kGuidePt = 1;      // guide thickness
   static constexpr uint32_t kGlowTexelPt = 4;  // the bloom's texel, in points (whole pixels)
   static constexpr uint32_t kMaxGlowDivisor = 16;  // its texel at most, in pixels
-  static constexpr float kGlowGain = 2.5f;     // light added at glow 1 (of the blurred light)
+  // The halo at glow 1: kGlowCeiling × (1 − exp(−blurred light × kGlowGain)).
+  static constexpr float kGlowGain = 8;
+  static constexpr float kGlowCeiling = 0.5f;
+  static constexpr float kLightBleedPt = 24;  // light kept past the scope (the glow's reach)
+  static constexpr float kEdgeFadePt = 4;     // the light fades out over this to its edges
+  static constexpr float kBleedStepPx = 16;   // the bleed is rounded up to a multiple of this
   static constexpr float kReadoutCap = 0.9f;   // readout digits' height, of the bar's
   static constexpr float kMinReadoutCapPx = 3;  // smaller readouts are not drawn
   static constexpr int kAtlasAttempts = 3;      // builds per frame to fit the widest readout
@@ -106,6 +114,7 @@ class MeterRenderer {
   // False when a texture could not be made; the frame then goes without it.
   bool ensureScope(uint32_t width, uint32_t height);
   bool ensureGlow(uint32_t divisor);
+  void placeLight(id<MTLTexture> target, float scale, float size_px);
   void encodeGlow(id<MTLCommandBuffer> commands);
   void encodeScope(id<MTLCommandBuffer> commands, id<MTLBuffer> slot, const MeterFrame& frame);
   void encodeComposite(id<MTLCommandBuffer> commands, id<MTLTexture> target, id<MTLBuffer> slot,
@@ -134,7 +143,7 @@ class MeterRenderer {
   std::shared_ptr<std::atomic<uint32_t>> free_slots_;
   std::array<id<MTLBuffer>, kFramesInFlight> buffers_;
   bool pending_clear_ = false;
-  id<MTLTexture> scope_;  // the accumulated light
+  id<MTLTexture> scope_;  // the accumulated light, light_rect_ in size
   // The light averaged over glow_divisor_² pixel blocks, blurred (with glow_spare_ for the
   // blur's first pass); made when glow is first on.
   id<MTLTexture> glow_;
@@ -143,7 +152,9 @@ class MeterRenderer {
   GlyphAtlas atlas_;
   float atlas_width_per_cap_ = 0;  // the widest readout's width per pixel of digit height
   float failed_cap_ = 0;           // a digit size whose atlas could not be made
-  Rect scope_rect_{};    // where it sits in the target, in whole pixels
+  Rect scope_rect_{};    // the scope in the target, in whole pixels
+  Rect light_rect_{};    // the light texture's place in the target: the scope and its bleed
+  Rect scope_offset_{};  // the scope's place in the light texture (x, y)
   bool scope_clear_ = true;
   bool has_previous_ = false;
   dsp::Point previous_{};
