@@ -1,15 +1,20 @@
 // Out-of-process Audio Unit smoke test.
 //
-// Instantiates the installed NEMURA Stereometer AU with kAudioComponentInstantiation_LoadOutOfProcess,
-// checks that the component's binary was not mapped into this process, renders one second of a
-// test signal (random full-scale values, denormals, signed zeros) through it in varying block
-// sizes, and requires the output to be bit-identical to the input (null test).
+// Instantiates the installed AU with kAudioComponentInstantiation_LoadOutOfProcess, checks that
+// the component's binary was not mapped into this process, renders one second of a test signal
+// (random full-scale values, denormals, signed zeros) through it in varying block sizes, and
+// requires the output to be bit-identical to the input (null test). Then it reads what the app
+// would: the instance must be listed in the shared registry by its own process, and its ring
+// must hold the signal's last frames, bit for bit.
 //
 //   nmr_au_oop_host [--in-process]     exit code 0 = pass
 #import <AudioToolbox/AudioToolbox.h>
 #import <Foundation/Foundation.h>
 #include <mach-o/dyld.h>
+#include <nmr/monotonic_clock.h>
 #include <nmr/product_config.h>
+#include <nmr/shm_transport.h>
+#include <unistd.h>
 
 #include <atomic>
 #include <cstddef>
@@ -27,6 +32,7 @@ constexpr UInt32 kMaxFrames = 1024;
 constexpr UInt32 kTotalFrames = 48000;
 constexpr UInt32 kBlockSizes[] = {64, 128, 17, 512, 480, 1024, 1};
 constexpr double kInstantiateTimeoutSeconds = 30.0;
+constexpr UInt32 kCheckedFrames = 4096;  // the tail of the signal the app must find in the ring
 
 // Deterministic test signal: every channel gets its own sequence. A few special values are
 // mixed in because a pass-through must not flush denormals or normalize signed zeros.
@@ -98,6 +104,48 @@ int fail(const char* what, OSStatus status = noErr) {
   return 1;
 }
 
+// Whether `info`'s ring is that instance's and its newest kCheckedFrames are the test signal's
+// last ones (up to `rendered`), bit for bit. A reused ring's counter goes on from where the
+// previous owner left it, so only the tail is compared.
+bool ringHoldsSignal(const nmr::shm::Registry& registry, const nmr::shm::SlotInfo& info,
+                     UInt64 rendered) {
+  nmr::shm::Status status = nmr::shm::Status::kFailed;
+  const auto ring = nmr::shm::Ring::open(registry, info.slot, status);
+  if (ring == nullptr || ring->owner() != info.instance_id) return false;
+  const nmr::FrameRingView view = ring->view();
+  const uint64_t written = view.framesWritten();
+  if (written < kCheckedFrames || rendered < kCheckedFrames) return false;
+  std::vector<float> frames(size_t{kCheckedFrames} * kChannels);
+  const uint64_t first = written - kCheckedFrames;
+  if (view.read(first, kCheckedFrames, frames.data()) != first) return false;
+  const UInt64 signal_first = rendered - kCheckedFrames;
+  for (UInt32 i = 0; i < kCheckedFrames; ++i) {
+    for (UInt32 c = 0; c < kChannels; ++c) {
+      const float expected = testSample(c, signal_first + i);
+      if (std::memcmp(&frames[size_t{i} * kChannels + c], &expected, sizeof(float)) != 0) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+// What the app sees while the instance is active: listed, beating, owned by another process
+// (the AU's own when it runs out of process), with the signal in its ring. Only reads.
+int checkSentToApp(UInt64 rendered, bool in_process) {
+  nmr::shm::Status status = nmr::shm::Status::kFailed;
+  const auto registry = nmr::shm::Registry::open(NMR_SHM_PREFIX, status);
+  if (registry == nullptr) return fail("registry");
+  for (const nmr::shm::SlotInfo& info : registry->live(nmr::MonotonicClock{}.nowNs())) {
+    if (!ringHoldsSignal(*registry, info, rendered)) continue;
+    std::printf("the app sees \"%s\" (slot %u, pid %d) with the signal in its ring\n",
+                info.name.c_str(), info.slot, info.pid);
+    if (!in_process && info.pid == getpid()) return fail("the sending instance ran in process");
+    return 0;
+  }
+  return fail("no instance sends the signal to the app");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -106,18 +154,21 @@ int main(int argc, char** argv) {
     AudioComponentDescription description{NMR_AU_TYPE_CODE, NMR_AU_SUBTYPE_CODE,
                                           NMR_AU_MANUFACTURER_CODE, 0, 0};
     AudioComponent component = AudioComponentFindNext(nullptr, &description);
-    if (component == nullptr) return fail("component not registered (run scripts/install-plugins.sh)");
+    if (component == nullptr) {
+      return fail("component not registered (run scripts/install-plugins.sh)");
+    }
 
     // Shared with the completion handler, which may still run after a timeout.
     const auto result = std::make_shared<Instantiation>();
     const AudioComponentInstantiationOptions options =
         in_process ? kAudioComponentInstantiation_LoadInProcess
                    : kAudioComponentInstantiation_LoadOutOfProcess;
-    AudioComponentInstantiate(component, options, ^(AudioComponentInstance instance, OSStatus status) {
-      result->unit = instance;
-      result->status = status;
-      result->done.store(true, std::memory_order_release);
-    });
+    AudioComponentInstantiate(component, options,
+                              ^(AudioComponentInstance instance, OSStatus status) {
+                                result->unit = instance;
+                                result->status = status;
+                                result->done.store(true, std::memory_order_release);
+                              });
     // The completion may arrive on the main queue: keep the run loop turning while waiting.
     NSDate* deadline = [NSDate dateWithTimeIntervalSinceNow:kInstantiateTimeoutSeconds];
     while (!result->done.load(std::memory_order_acquire) && deadline.timeIntervalSinceNow > 0) {
@@ -190,6 +241,7 @@ int main(int argc, char** argv) {
       rendered += frames;
     }
 
+    const int sent = checkSentToApp(rendered, in_process);  // before deactivation releases it
     AudioUnitUninitialize(unit);
     AudioComponentInstanceDispose(unit);
 
@@ -197,6 +249,7 @@ int main(int argc, char** argv) {
                 static_cast<unsigned long long>(rendered), kChannels,
                 static_cast<unsigned long long>(mismatches));
     if (mismatches != 0) return fail("output is not bit-identical to the input");
+    if (sent != 0) return sent;
     std::printf("PASS\n");
     return 0;
   }

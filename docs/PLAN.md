@@ -119,7 +119,8 @@ Legend: `[x]` done and verified, `[~]` in progress / partially verified, `[ ]` n
       (DECISIONS: plugin send, plugin editor)
 - [x] Editor: shared renderer + schema-generated settings panel; open/close loops without leaks
       (DECISIONS: plugin editor)
-- [ ] Every validator green on both architectures; OOP AU test delivers audio to the app
+- [x] Every validator green on both architectures; OOP AU test delivers audio to the app
+      (DECISIONS: OOP AU send test)
 - [ ] **CHECKPOINT C** (10-minute DAW checklist for Ableton and FL)
 
 ## Phase 5: polish, performance, release

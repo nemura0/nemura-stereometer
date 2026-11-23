@@ -4,7 +4,8 @@
 #   auval -strict              AU, arm64 and x86_64 (Rosetta)
 #   pluginval (strictness 8)   VST3 and AU, arm64 and x86_64 (Rosetta)
 #   clap-validator             CLAP
-#   nmr_au_oop_host            AU loaded out of process + bit-exact null test, arm64 and x86_64
+#   nmr_au_oop_host            AU loaded out of process + bit-exact null test + the app finds
+#                              the signal in the instance's ring, arm64 and x86_64
 #
 # Logs: build/validate/<check>.log. Exits non-zero if any check fails.
 # Overrides: PLUGINVAL, CLAP_VALIDATOR, NMR_PLUGINVAL_STRICTNESS, NMR_SKIP_GUI_TESTS=1 (CI),
