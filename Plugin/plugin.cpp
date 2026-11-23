@@ -1,13 +1,16 @@
 #include "plugin.h"
 
 #include <nmr/frame_ring.h>
+#include <nmr/presets.h>
 #include <nmr/product_config.h>
+#include <nmr/settings_json.h>
 
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <memory>
 #include <string>
+#include <string_view>
 
 #include "editor.h"
 
@@ -44,9 +47,9 @@ const clap_plugin_descriptor_t kDescriptor = {
     kFeatures,
 };
 
-// Versioned plugin state. Phase 0 only records the format; settings arrive in Phase 4.
-constexpr const char* kDefaultState = R"({"format":"nemura-stereometer-state","version":1})";
-constexpr size_t kMaxStateBytes = 1 << 20;
+// The state the first builds saved (no settings yet): it loads as the first-run settings.
+constexpr std::string_view kFirstBuildsState =
+    R"({"format":"nemura-stereometer-state","version":1})";
 
 // ---------------------------------------------------------------------------------------------
 // Denormals: the x86_64 slice runs under Rosetta in some DAWs; keep FTZ/DAZ on while processing.
@@ -82,7 +85,9 @@ struct Instance {
   std::unique_ptr<Editor> editor;
   uint32_t editor_width = Editor::kDefaultWidth;
   uint32_t editor_height = Editor::kDefaultHeight;
-  std::string state = kDefaultState;
+  settings::Settings settings = presets::firstRun();  // main thread
+  uint32_t channels = 2;  // both ports: mono or stereo, changed only while inactive
+  bool active = false;    // main thread
 };
 
 Instance* self(const clap_plugin_t* plugin) { return static_cast<Instance*>(plugin->plugin_data); }
@@ -139,19 +144,63 @@ clap_process_status process(const clap_plugin_t* plugin, const clap_process_t* p
 
 uint32_t audioPortsCount(const clap_plugin_t*, bool) { return 1; }
 
-bool audioPortsGet(const clap_plugin_t*, uint32_t index, bool is_input,
+const char* portType(uint32_t channels) { return channels == 1 ? CLAP_PORT_MONO : CLAP_PORT_STEREO; }
+
+bool audioPortsGet(const clap_plugin_t* plugin, uint32_t index, bool is_input,
                    clap_audio_port_info_t* info) {
   if (index != 0) return false;
+  const uint32_t channels = self(plugin)->channels;
   info->id = 0;
   std::snprintf(info->name, sizeof(info->name), "%s", is_input ? "Input" : "Output");
   info->flags = CLAP_AUDIO_PORT_IS_MAIN;
-  info->channel_count = 2;
-  info->port_type = CLAP_PORT_STEREO;
+  info->channel_count = channels;
+  info->port_type = portType(channels);
   info->in_place_pair = 0;
   return true;
 }
 
 const clap_plugin_audio_ports_t kAudioPorts = {audioPortsCount, audioPortsGet};
+
+// ---------------------------------------------------------------------------------------------
+// clap.configurable-audio-ports: a mono or a stereo track, the same on both sides (main thread,
+// inactive only)
+
+// The channel count both ports would have after `requests`, or 0 when it is not a layout this
+// plugin takes.
+uint32_t requestedChannels(const Instance& instance,
+                           const clap_audio_port_configuration_request_t* requests,
+                           uint32_t count) {
+  if (instance.active || (count > 0 && requests == nullptr)) return 0;
+  uint32_t sides[2] = {instance.channels, instance.channels};  // input, output
+  for (uint32_t i = 0; i < count; ++i) {
+    const clap_audio_port_configuration_request_t& request = requests[i];
+    const uint32_t channels = request.channel_count;
+    if (request.port_index != 0 || (channels != 1 && channels != 2)) return 0;
+    if (request.port_type != nullptr && std::strcmp(request.port_type, portType(channels)) != 0) {
+      return 0;
+    }
+    sides[request.is_input ? 0 : 1] = channels;
+  }
+  return sides[0] == sides[1] ? sides[0] : 0;
+}
+
+bool canApplyConfiguration(const clap_plugin_t* plugin,
+                           const clap_audio_port_configuration_request_t* requests,
+                           uint32_t count) {
+  return requestedChannels(*self(plugin), requests, count) != 0;
+}
+
+bool applyConfiguration(const clap_plugin_t* plugin,
+                        const clap_audio_port_configuration_request_t* requests, uint32_t count) {
+  Instance* instance = self(plugin);
+  const uint32_t channels = requestedChannels(*instance, requests, count);
+  if (channels == 0) return false;
+  instance->channels = channels;
+  return true;
+}
+
+const clap_plugin_configurable_audio_ports_t kConfigurablePorts = {canApplyConfiguration,
+                                                                   applyConfiguration};
 
 // ---------------------------------------------------------------------------------------------
 // clap.latency
@@ -164,29 +213,44 @@ const clap_plugin_latency_t kLatency = {latencyGet};
 // clap.state
 
 bool stateSave(const clap_plugin_t* plugin, const clap_ostream_t* stream) {
-  const std::string& state = self(plugin)->state;
-  size_t written = 0;
-  while (written < state.size()) {
-    const int64_t n = stream->write(stream, state.data() + written, state.size() - written);
-    if (n <= 0) return false;
-    written += static_cast<size_t>(n);
+  try {
+    const std::string state = settings::encodeState(self(plugin)->settings);
+    size_t written = 0;
+    while (written < state.size()) {
+      const int64_t n = stream->write(stream, state.data() + written, state.size() - written);
+      if (n <= 0) return false;
+      written += static_cast<size_t>(n);
+    }
+    return true;
+  } catch (...) {  // out of memory: nothing may cross the C boundary
+    return false;
   }
-  return true;
 }
 
+// A settings document replaces every setting; anything else is refused and changes nothing.
 bool stateLoad(const clap_plugin_t* plugin, const clap_istream_t* stream) {
-  std::string data;
-  char buffer[4096];
-  for (;;) {
-    const int64_t n = stream->read(stream, buffer, sizeof(buffer));
-    if (n < 0) return false;
-    if (n == 0) break;
-    data.append(buffer, static_cast<size_t>(n));
-    if (data.size() > kMaxStateBytes) return false;
+  try {
+    std::string data;
+    char buffer[4096];
+    for (;;) {
+      const int64_t n = stream->read(stream, buffer, sizeof(buffer));
+      if (n < 0) return false;
+      if (n == 0) break;
+      data.append(buffer, static_cast<size_t>(n));
+      if (data.size() > settings::kMaxDocumentBytes) return false;
+    }
+    settings::Report report;
+    settings::Settings loaded = settings::decodeState(data, report);
+    if (data == kFirstBuildsState) {
+      loaded = presets::firstRun();
+    } else if (report.status != settings::Status::kOk) {
+      return false;
+    }
+    self(plugin)->settings = std::move(loaded);
+    return true;
+  } catch (...) {
+    return false;
   }
-  if (data.empty() || data.front() != '{') return false;
-  self(plugin)->state = std::move(data);
-  return true;
 }
 
 const clap_plugin_state_t kState = {stateSave, stateLoad};
@@ -293,12 +357,13 @@ void pluginDestroy(const clap_plugin_t* plugin) { delete self(plugin); }
 
 bool pluginActivate(const clap_plugin_t* plugin, double sample_rate, uint32_t, uint32_t) {
   Instance* instance = self(plugin);
+  instance->active = true;
   instance->sample_rate = sample_rate;
   if (instance->editor) instance->editor->setSource(instance->editor_ring.view(), sample_rate);
   return true;
 }
 
-void pluginDeactivate(const clap_plugin_t*) {}
+void pluginDeactivate(const clap_plugin_t* plugin) { self(plugin)->active = false; }
 
 bool pluginStartProcessing(const clap_plugin_t*) { return true; }
 
@@ -308,6 +373,10 @@ void pluginReset(const clap_plugin_t*) {}
 
 const void* pluginGetExtension(const clap_plugin_t*, const char* id) {
   if (std::strcmp(id, CLAP_EXT_AUDIO_PORTS) == 0) return &kAudioPorts;
+  if (std::strcmp(id, CLAP_EXT_CONFIGURABLE_AUDIO_PORTS) == 0 ||
+      std::strcmp(id, CLAP_EXT_CONFIGURABLE_AUDIO_PORTS_COMPAT) == 0) {
+    return &kConfigurablePorts;
+  }
   if (std::strcmp(id, CLAP_EXT_LATENCY) == 0) return &kLatency;
   if (std::strcmp(id, CLAP_EXT_STATE) == 0) return &kState;
   if (std::strcmp(id, CLAP_EXT_GUI) == 0) return &kGui;
@@ -321,7 +390,12 @@ void pluginOnMainThread(const clap_plugin_t*) {}
 const clap_plugin_descriptor_t* descriptor() noexcept { return &kDescriptor; }
 
 const clap_plugin_t* create(const clap_host_t* host) {
-  auto* instance = new Instance();
+  Instance* instance = nullptr;
+  try {
+    instance = new Instance();  // its members allocate too
+  } catch (...) {
+    return nullptr;
+  }
   instance->host = host;
   instance->clap.desc = &kDescriptor;
   instance->clap.plugin_data = instance;

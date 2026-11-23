@@ -80,6 +80,8 @@ std::span<const Preset> factory() {
   return kFactory;
 }
 
+settings::Settings firstRun() { return settings::applyPreset(settings::Settings{}, original()); }
+
 fs::path directory() { return files::supportFolder("Presets"); }
 
 std::vector<Entry> list(const fs::path& folder) { return files::list(folder, ".json"); }

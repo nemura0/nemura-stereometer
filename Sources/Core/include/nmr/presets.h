@@ -23,6 +23,10 @@ using settings::Report;
 // Mix, Stage, the original mode's preset (named after the vendor) and Classic.
 [[nodiscard]] std::span<const Preset> factory();
 
+// What a new meter starts with, in the app and in a new plugin instance: the original mode's
+// preset over the defaults.
+[[nodiscard]] settings::Settings firstRun();
+
 // The user's preset folder (the real home, also inside a sandboxed host). Nothing is created.
 [[nodiscard]] std::filesystem::path directory();
 

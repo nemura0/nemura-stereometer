@@ -17,6 +17,15 @@ struct PresetsTests {
     #expect(original.settings.choice(.mode) == "original")
   }
 
+  @Test("The app starts as a new plugin instance does: the original mode's preset")
+  func firstRun() throws {
+    let first = SettingsStore.firstSettings
+    #expect(first == SettingValues(adopting: nmr_presets_first_run()))
+    #expect(first.choice(.mode) == "original")
+    let original = try #require(Presets.factory.first { $0.settings.choice(.mode) == "original" })
+    #expect(first == SettingValues().applying(original.settings))
+  }
+
   @Test("Applying a preset changes the look and keeps the window behavior")
   func apply() throws {
     var current = SettingValues()

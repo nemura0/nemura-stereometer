@@ -101,6 +101,14 @@ TEST_CASE("factory presets: each survives JSON unchanged, and no two look the sa
   }
 }
 
+TEST_CASE("first-run settings: the original mode's preset over the defaults") {
+  const st::Settings first = presets::firstRun();
+  CHECK(first.choiceKey(st::Id::kMode) == "original");
+  const st::Preset& original = presets::factory()[2];
+  CHECK(first == st::applyPreset(st::Settings{}, original.settings));
+  CHECK(first.flag(st::Id::kSendToApp) == st::Settings{}.flag(st::Id::kSendToApp));
+}
+
 // ---- Preset files ----------------------------------------------------------------------------
 
 TEST_CASE("preset folder: Application Support in the real home, whatever HOME says") {

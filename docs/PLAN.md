@@ -113,7 +113,8 @@ Legend: `[x]` done and verified, `[~]` in progress / partially verified, `[ ]` n
 
 ## Phase 4: plugin
 
-- [ ] Bit-exact pass-through (null test), mono and stereo layouts, versioned state save/restore
+- [x] Bit-exact pass-through (null test), mono and stereo layouts, versioned state save/restore
+      (DECISIONS: plugin layouts, plugin state, plugin host test)
 - [ ] Shared-memory send with status indicator; multiple instances
 - [ ] Editor: shared renderer + schema-generated settings panel; open/close loops without leaks
 - [ ] Every validator green on both architectures; OOP AU test delivers audio to the app

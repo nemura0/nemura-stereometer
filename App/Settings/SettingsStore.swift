@@ -1,4 +1,5 @@
 import Foundation
+import NMRCoreC
 import Observation
 import os
 
@@ -59,12 +60,9 @@ final class SettingsStore {
     presets.first(where: matches)
   }
 
-  /// The NEMURA preset (the original mode) over the defaults.
+  /// The NEMURA preset (the original mode) over the defaults, as a new plugin instance starts.
   nonisolated static var firstSettings: SettingValues {
-    let settings = SettingValues()
-    guard let nemura = Presets.factory.first(where: { $0.settings.choice(.mode) == "original" })
-    else { return settings }
-    return settings.applying(nemura.settings)
+    SettingValues(adopting: nmr_presets_first_run())
   }
 
   private static func load(from defaults: UserDefaults?) -> SettingValues {

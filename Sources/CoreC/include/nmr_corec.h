@@ -159,6 +159,8 @@ const char* nmr_presets_factory_name(uint32_t index);        // static storage; 
 nmr_settings* nmr_presets_factory_settings(uint32_t index);  // a new handle; NULL past the end
 // `current` with every preset entry taken from `preset`: a new handle; NULL for NULL.
 nmr_settings* nmr_presets_apply(const nmr_settings* current, const nmr_settings* preset);
+// What a new meter starts with (the app's first run, a new plugin instance): a new handle.
+nmr_settings* nmr_presets_first_run(void);
 
 // The user's preset folder (nothing is created); "" without a home. Free with nmr_string_free.
 char* nmr_presets_directory(void);

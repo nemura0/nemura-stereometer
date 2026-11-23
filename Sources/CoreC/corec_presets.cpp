@@ -55,6 +55,10 @@ nmr_settings* nmr_presets_apply(const nmr_settings* current, const nmr_settings*
   });
 }
 
+nmr_settings* nmr_presets_first_run(void) {
+  return guarded<nmr_settings*>(nullptr, [] { return new nmr_settings{presets::firstRun()}; });
+}
+
 char* nmr_presets_directory(void) {
   return guarded<char*>(nullptr, [] { return duplicate(presets::directory().native()); });
 }
