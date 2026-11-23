@@ -3,6 +3,7 @@
 // gear opens, and open/close loops that leak nothing. Controls are found by identifier: the bar's
 // by name, the panel's by setting key.
 #import <AppKit/AppKit.h>
+#import <Metal/Metal.h>
 #include <doctest/doctest.h>
 #include <mach/mach.h>
 #include <malloc/malloc.h>
@@ -142,6 +143,12 @@ uint64_t footprint() {
   REQUIRE(task_info(mach_task_self(), TASK_VM_INFO, reinterpret_cast<task_info_t>(&info),
                     &count) == KERN_SUCCESS);
   return info.phys_footprint;
+}
+
+// The Metal device of a macOS virtual machine ("Apple Paravirtual device").
+bool onVirtualGpu() {
+  id<MTLDevice> device = MTLCreateSystemDefaultDevice();
+  return device == nil || [device.name rangeOfString:@"Paravirtual"].location != NSNotFound;
 }
 
 // What the process holds once the allocators gave back what is free and finished frames were
@@ -358,15 +365,22 @@ TEST_CASE("editor: opening and closing it again and again leaks nothing") {
   ClapInstance instance;
   REQUIRE(instance.valid());
   REQUIRE(instance.activate());
+  int survivors = 0;  // meters and panels still alive after their editor closed
   const auto cycle = [&](int times) {
+    NSPointerArray* closed = [NSPointerArray weakObjectsPointerArray];
     for (int i = 0; i < times; ++i) {
       @autoreleasepool {
         EditorSession editor(instance);
         [editor.control<NSButton>(@"gear") performClick:nil];
+        [closed addPointer:(__bridge void*)editor.control(@"meter")];
+        [closed addPointer:(__bridge void*)editor.control(@"settings")];
         spin(0.01);
       }
     }
     spin(0.2);
+    for (NSUInteger i = 0; i < closed.count; ++i) {  // zeroed when the view went
+      if ([closed pointerAtIndex:i] != nullptr) ++survivors;
+    }
   };
   // Warm up: caches, the shader library, and Rosetta's translations of the x86_64 slice.
   cycle(25);
@@ -376,8 +390,12 @@ TEST_CASE("editor: opening and closing it again and again leaks nothing") {
   INFO("malloc " << before.malloc_bytes / 1024 << " KiB -> " << after.malloc_bytes / 1024
                  << " KiB, footprint " << before.footprint / 1024 << " KiB -> "
                  << after.footprint / 1024 << " KiB");
+  // Every meter (its layer and drawables with it) and panel goes when its editor closes.
+  CHECK(survivors == 0);
   // One editor left behind holds megabytes (its settings panel alone about 5 MiB, its meter's
-  // drawables more); free pages the allocator keeps (more under Rosetta) widen both margins.
+  // drawables more); free pages the allocator keeps (more under Rosetta) widen the margin.
   CHECK(after.malloc_bytes < before.malloc_bytes + 4 * 1024 * 1024);
-  CHECK(after.footprint < before.footprint + 32 * 1024 * 1024);
+  // A virtual GPU (CI's macOS VMs) keeps memory of its own across drawables, which the
+  // footprint counts; there the weak references above stand in for it.
+  if (!onVirtualGpu()) CHECK(after.footprint < before.footprint + 32 * 1024 * 1024);
 }

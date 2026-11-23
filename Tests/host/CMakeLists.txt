@@ -9,7 +9,8 @@ target_include_directories(nmr_plugin_tests PRIVATE "${CMAKE_SOURCE_DIR}/Tests/c
 target_compile_definitions(nmr_plugin_tests PRIVATE
   NMR_TEST_CLAP_BINARY="$<TARGET_FILE:nmr_plugin_clap>"
   NMR_TEST_CLAP_BUNDLE="$<TARGET_BUNDLE_DIR:nmr_plugin_clap>")
-target_link_libraries(nmr_plugin_tests PRIVATE nmr_core clap nmr_warnings "-framework AppKit")
+target_link_libraries(nmr_plugin_tests PRIVATE nmr_core clap nmr_warnings "-framework AppKit"
+  "-framework Metal")
 add_dependencies(nmr_plugin_tests nmr_plugin_clap)
 
 add_test(NAME plugin.native COMMAND nmr_plugin_tests)
