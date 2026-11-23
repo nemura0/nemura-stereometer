@@ -6,6 +6,7 @@
 #include <nmr/shm_transport.h>
 
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <thread>
 #include <vector>
@@ -166,7 +167,10 @@ TEST_CASE("instance sender: a registry it may not open is unavailable") {
   CHECK_FALSE(sender.slot().has_value());
 }
 
-TEST_CASE("instance sender: turning it off while the audio thread writes never tears a write") {
+// A stress test: it cannot force a write to be in progress while the slot changes hands (a claim
+// takes milliseconds, a write microseconds), so it would rarely catch a missing wait; the wait's
+// correctness rests on the seq_cst handshake (DECISIONS: plugin send).
+TEST_CASE("instance sender: once released, its slot's next owner never gets its writes") {
   const TestPrefix prefix;
   const auto registry = openRegistry(prefix);
   InstanceSender sender(prefix.str());
@@ -178,11 +182,93 @@ TEST_CASE("instance sender: turning it off while the audio thread writes never t
       sender.write(samples.data(), samples.data(), 256);
     }
   });
+  InstanceSender next(prefix.str());  // never writes: its ring must not move
+  uint32_t taken_over = 0;
   for (int i = 0; i < 200; ++i) {
+    const uint32_t slot = *sender.slot();
     sender.setEnabled(false);
+    next.start(48000, "Next");
+    REQUIRE(next.slot().has_value());
+    if (*next.slot() == slot) {
+      ++taken_over;
+      shm::Status status = shm::Status::kFailed;
+      const auto ring = shm::Ring::open(*registry, slot, status);
+      REQUIRE(ring != nullptr);
+      REQUIRE(ring->owner() == next.instanceId());
+      const uint64_t written = ring->view().framesWritten();
+      std::this_thread::sleep_for(std::chrono::microseconds(200));
+      CHECK(ring->view().framesWritten() == written);
+    }
+    next.stop();
     sender.setEnabled(true);
   }
   running = false;
   audio.join();
+  CHECK(taken_over > 0);
+  CHECK(live(*registry).size() == 1);
+}
+
+TEST_CASE("instance sender: a slot taken from it is reported, and claimed again on poll") {
+  const TestPrefix prefix;
+  const auto registry = openRegistry(prefix);
+  InstanceSender sender(prefix.str());
+  sender.start(48000, "Bass");
+  registry->release(*sender.slot(), sender.instanceId());  // as if reclaimed
+  const std::vector<float> samples = ramp(64, 0);
+  sender.write(samples.data(), samples.data(), 64);
+  CHECK(sender.state() == State::kUnavailable);
+  sender.poll();
+  CHECK(sender.state() == State::kNoApp);
+  CHECK(live(*registry).size() == 1);
+  sender.poll();  // nothing lost: nothing changes
+  CHECK(live(*registry).size() == 1);
+}
+
+TEST_CASE("instance sender: started again without a stop, it sends at the new rate") {
+  const TestPrefix prefix;
+  const auto registry = openRegistry(prefix);
+  InstanceSender sender(prefix.str());
+  sender.start(48000, "Bass");
+  sender.start(96000, "Bass");
+  REQUIRE(live(*registry).size() == 1);
+  CHECK(live(*registry)[0].sample_rate == 96000);
+}
+
+TEST_CASE("instance sender: started without a name, it keeps the one it was given") {
+  const TestPrefix prefix;
+  const auto registry = openRegistry(prefix);
+  InstanceSender sender(prefix.str());
+  sender.rename("Keys");
+  sender.start(48000);
+  REQUIRE(live(*registry).size() == 1);
+  CHECK(live(*registry)[0].name == "Keys");
+}
+
+// Some hosts activate an AU on a thread of their own while the editor polls on the main thread.
+TEST_CASE("instance sender: control calls from two threads at once stay consistent") {
+  const TestPrefix prefix;
+  const auto registry = openRegistry(prefix);
+  InstanceSender sender(prefix.str());
+  std::atomic<bool> done{false};
+  std::thread host([&] {
+    for (int i = 0; i < 2000; ++i) {
+      sender.start(i % 2 == 0 ? 48000 : 44100);
+      sender.stop();
+    }
+    done = true;
+  });
+  int polls = 0;
+  while (!done) {
+    sender.poll();
+    sender.setEnabled(polls % 3 != 0);
+    sender.rename(polls % 2 == 0 ? "Bass" : "Keys");
+    (void)sender.state();
+    ++polls;
+  }
+  host.join();
+  sender.setEnabled(true);
+  CHECK(sender.state() == State::kOff);
+  CHECK(live(*registry).empty());
+  sender.start(48000);
   CHECK(live(*registry).size() == 1);
 }

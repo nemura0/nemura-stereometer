@@ -93,10 +93,14 @@ std::string defaultName() {
   return std::string(NMR_PRODUCT_SHORT) + " " + std::to_string(created.fetch_add(1) + 1);
 }
 
-struct Instance {
+struct Instance;
+void applySendSettings(Instance& instance);
+
+struct Instance final : Editor::Host {
   clap_plugin_t clap{};
   const clap_host_t* host = nullptr;
   const clap_host_track_info_t* track_info = nullptr;  // the host's, if it offers one
+  const clap_host_state_t* host_state = nullptr;       // the host's, if it offers one
   InstanceSender sender{sendPrefix()};  // writes on the audio thread, until deactivate
   std::string default_name = defaultName();
   LocalFrameRing editor_ring{kEditorRingFrames};  // outlives the editor (declared first)
@@ -105,9 +109,39 @@ struct Instance {
   std::unique_ptr<Editor> editor;
   uint32_t editor_width = Editor::kDefaultWidth;
   uint32_t editor_height = Editor::kDefaultHeight;
-  settings::Settings settings = presets::firstRun();  // main thread
+  settings::Settings current_settings = presets::firstRun();  // main thread
   uint32_t channels = 2;  // both ports: mono or stereo, changed only while inactive
   bool active = false;    // main thread
+
+  // The editor goes first: closing it may commit a name being typed, through changeSettings.
+  ~Instance() { editor.reset(); }
+
+  // Editor::Host (main thread)
+  [[nodiscard]] const settings::Settings& settings() const override { return current_settings; }
+  void changeSettings(const settings::Settings& changed) override {
+    using settings::Id;
+    const bool send_changed =
+        changed.flag(Id::kSendToApp) != current_settings.flag(Id::kSendToApp) ||
+        changed.text(Id::kSourceName) != current_settings.text(Id::kSourceName);
+    if (send_changed) {  // slider drags touch neither: no registry write for them
+      settings::Settings previous = current_settings;
+      current_settings = changed;
+      try {
+        applySendSettings(*this);
+      } catch (...) {  // out of memory: nothing changes (the editor shows the old settings)
+        current_settings = std::move(previous);
+        applySendSettings(*this);
+        throw;
+      }
+    } else {
+      current_settings = changed;
+    }
+    if (host_state != nullptr) host_state->mark_dirty(host);
+  }
+  [[nodiscard]] InstanceSender::State sendState() override {
+    sender.poll();
+    return sender.state();
+  }
 };
 
 Instance* self(const clap_plugin_t* plugin) { return static_cast<Instance*>(plugin->plugin_data); }
@@ -166,7 +200,9 @@ clap_process_status process(const clap_plugin_t* plugin, const clap_process_t* p
 
 uint32_t audioPortsCount(const clap_plugin_t*, bool) { return 1; }
 
-const char* portType(uint32_t channels) { return channels == 1 ? CLAP_PORT_MONO : CLAP_PORT_STEREO; }
+const char* portType(uint32_t channels) {
+  return channels == 1 ? CLAP_PORT_MONO : CLAP_PORT_STEREO;
+}
 
 bool audioPortsGet(const clap_plugin_t* plugin, uint32_t index, bool is_input,
                    clap_audio_port_info_t* info) {
@@ -236,7 +272,7 @@ const clap_plugin_latency_t kLatency = {latencyGet};
 
 // The name the app lists: the user's source name, else the track's, else "Stereometer N".
 std::string sourceName(const Instance& instance) {
-  const std::string& chosen = instance.settings.text(settings::Id::kSourceName);
+  const std::string& chosen = instance.current_settings.text(settings::Id::kSourceName);
   if (!chosen.empty()) return chosen;
   clap_track_info_t info{};
   if (instance.track_info != nullptr && instance.track_info->get(instance.host, &info) &&
@@ -248,7 +284,7 @@ std::string sourceName(const Instance& instance) {
 
 // After the settings change: send or stop sending, under the current name.
 void applySendSettings(Instance& instance) {
-  instance.sender.setEnabled(instance.settings.flag(settings::Id::kSendToApp));
+  instance.sender.setEnabled(instance.current_settings.flag(settings::Id::kSendToApp));
   instance.sender.rename(sourceName(instance));
 }
 
@@ -267,7 +303,7 @@ const clap_plugin_track_info_t kTrackInfo = {trackInfoChanged};
 
 bool stateSave(const clap_plugin_t* plugin, const clap_ostream_t* stream) {
   try {
-    const std::string state = settings::encodeState(self(plugin)->settings);
+    const std::string state = settings::encodeState(self(plugin)->current_settings);
     size_t written = 0;
     while (written < state.size()) {
       const int64_t n = stream->write(stream, state.data() + written, state.size() - written);
@@ -300,8 +336,16 @@ bool stateLoad(const clap_plugin_t* plugin, const clap_istream_t* stream) {
       return false;
     }
     Instance* instance = self(plugin);
-    instance->settings = std::move(loaded);
-    applySendSettings(*instance);
+    settings::Settings previous = std::move(instance->current_settings);
+    instance->current_settings = std::move(loaded);
+    try {
+      applySendSettings(*instance);
+    } catch (...) {  // out of memory: put the old settings back, as a refused state does
+      instance->current_settings = std::move(previous);
+      applySendSettings(*instance);
+      return false;
+    }
+    if (instance->editor) instance->editor->settingsChanged();
     return true;
   } catch (...) {
     return false;
@@ -326,9 +370,14 @@ bool guiGetPreferredApi(const clap_plugin_t*, const char** api, bool* is_floatin
 bool guiCreate(const clap_plugin_t* plugin, const char* api, bool is_floating) {
   if (!guiIsApiSupported(plugin, api, is_floating)) return false;
   Instance* instance = self(plugin);
-  if (!instance->editor) {
-    instance->editor = std::make_unique<Editor>(instance->editor_width, instance->editor_height);
+  if (instance->editor) return true;
+  try {
+    instance->editor =
+        std::make_unique<Editor>(*instance, instance->editor_width, instance->editor_height);
     instance->editor->setSource(instance->editor_ring.view(), instance->sample_rate);
+  } catch (...) {  // out of memory: no editor
+    instance->editor.reset();
+    return false;
   }
   return true;
 }
@@ -410,6 +459,8 @@ bool pluginInit(const clap_plugin_t* plugin) {
   Instance* instance = self(plugin);
   instance->track_info = static_cast<const clap_host_track_info_t*>(
       instance->host->get_extension(instance->host, CLAP_EXT_TRACK_INFO));
+  instance->host_state = static_cast<const clap_host_state_t*>(
+      instance->host->get_extension(instance->host, CLAP_EXT_STATE));
   try {
     applySendSettings(*instance);
   } catch (...) {
@@ -425,7 +476,9 @@ bool pluginActivate(const clap_plugin_t* plugin, double sample_rate, uint32_t, u
   instance->active = true;
   instance->sample_rate = sample_rate;
   try {
-    instance->sender.start(sample_rate, sourceName(*instance));
+    // Under the name the main thread gave it: some AU hosts activate on a thread of their own,
+    // so nothing here reads the settings.
+    instance->sender.start(sample_rate);
   } catch (...) {  // out of memory: process without sending
   }
   if (instance->editor) instance->editor->setSource(instance->editor_ring.view(), sample_rate);

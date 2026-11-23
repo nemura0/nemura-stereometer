@@ -24,8 +24,15 @@ bool trackInfo(const clap_host_t* host, clap_track_info_t* info) {
 
 const clap_host_track_info_t kTrackInfo = {trackInfo};
 
+void markDirty(const clap_host_t* host) {
+  static_cast<ClapInstance*>(host->host_data)->markDirty();
+}
+
+const clap_host_state_t kHostState = {markDirty};
+
 const void* hostExtension(const clap_host_t* host, const char* id) {
   const auto* instance = static_cast<const ClapInstance*>(host->host_data);
+  if (std::strcmp(id, CLAP_EXT_STATE) == 0) return &kHostState;
   if (std::strcmp(id, CLAP_EXT_TRACK_INFO) == 0 && !instance->trackName().empty()) {
     return &kTrackInfo;
   }

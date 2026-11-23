@@ -115,10 +115,10 @@ Legend: `[x]` done and verified, `[~]` in progress / partially verified, `[ ]` n
 
 - [x] Bit-exact pass-through (null test), mono and stereo layouts, versioned state save/restore
       (DECISIONS: plugin layouts, plugin state, plugin host test)
-- [ ] Shared-memory send with status indicator; multiple instances
-      (send, names and 10 instances done, DECISIONS: plugin send; the status dot comes with
-      the editor's top bar)
-- [ ] Editor: shared renderer + schema-generated settings panel; open/close loops without leaks
+- [x] Shared-memory send with status indicator; multiple instances
+      (DECISIONS: plugin send, plugin editor)
+- [x] Editor: shared renderer + schema-generated settings panel; open/close loops without leaks
+      (DECISIONS: plugin editor)
 - [ ] Every validator green on both architectures; OOP AU test delivers audio to the app
 - [ ] **CHECKPOINT C** (10-minute DAW checklist for Ableton and FL)
 

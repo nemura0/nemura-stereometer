@@ -66,9 +66,14 @@ class ClapInstance {
   void renameTrack(std::string name);
   [[nodiscard]] const std::string& trackName() const noexcept { return track_name_; }
 
+  // How many times the plugin told the host its state changed (clap.state's mark_dirty).
+  [[nodiscard]] int dirtyMarks() const noexcept { return dirty_marks_; }
+  void markDirty() noexcept { ++dirty_marks_; }
+
  private:
   clap_host_t host_{};
   std::string track_name_;
+  int dirty_marks_ = 0;
   const clap_plugin_t* plugin_ = nullptr;
   bool active_ = false;
   bool processing_ = false;

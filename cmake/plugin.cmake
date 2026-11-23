@@ -25,7 +25,8 @@ set(NMR_PLUGIN_OUTPUT_DIR "${CMAKE_BINARY_DIR}/plugins")
 set(NMR_PLUGIN_SOURCES
   "${CMAKE_CURRENT_SOURCE_DIR}/Plugin/entry.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/Plugin/plugin.cpp"
-  "${CMAKE_CURRENT_SOURCE_DIR}/Plugin/editor.mm")
+  "${CMAKE_CURRENT_SOURCE_DIR}/Plugin/editor.mm"
+  "${CMAKE_CURRENT_SOURCE_DIR}/Plugin/editor_controls.mm")
 
 # nmr_add_plugin_module(<target> <objc-suffix>): an empty MODULE that links this format's own copy
 # of the plugin code (an OBJECT library, so clap_entry is always linked in) and renderer. The
