@@ -16,6 +16,9 @@ class ClapLibrary {
   static ClapLibrary& shared();
   [[nodiscard]] const clap_plugin_factory_t* factory() const noexcept { return factory_; }
   [[nodiscard]] const std::string& error() const noexcept { return error_; }
+  // The shared-memory prefix every instance in this process sends to (the plugin reads it from
+  // NMR_TEST_SHM_PREFIX), not the app's: its segments are removed before and after.
+  [[nodiscard]] const std::string& sendPrefix() const noexcept { return send_prefix_; }
 
  private:
   ClapLibrary();
@@ -24,6 +27,7 @@ class ClapLibrary {
   const clap_plugin_entry_t* entry_ = nullptr;
   const clap_plugin_factory_t* factory_ = nullptr;
   std::string error_;
+  std::string send_prefix_;
 };
 
 // Planar float32 audio: one vector per channel.
@@ -31,7 +35,9 @@ using Channels = std::vector<std::vector<float>>;
 
 class ClapInstance {
  public:
-  ClapInstance();  // created and initialized; valid() says whether it worked
+  // Created and initialized; valid() says whether it worked. A track name makes the host offer
+  // clap.track-info with it.
+  explicit ClapInstance(std::string track_name = {});
   ~ClapInstance();
   ClapInstance(const ClapInstance&) = delete;
   ClapInstance& operator=(const ClapInstance&) = delete;
@@ -56,8 +62,13 @@ class ClapInstance {
   // Loads `state`, read in chunks of at most `chunk` bytes.
   [[nodiscard]] bool load(const std::string& state, size_t chunk = 1 << 20);
 
+  // Renames the track and tells the plugin, as a host does.
+  void renameTrack(std::string name);
+  [[nodiscard]] const std::string& trackName() const noexcept { return track_name_; }
+
  private:
   clap_host_t host_{};
+  std::string track_name_;
   const clap_plugin_t* plugin_ = nullptr;
   bool active_ = false;
   bool processing_ = false;

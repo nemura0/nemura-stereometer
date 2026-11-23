@@ -2,7 +2,7 @@
 #
 # nmr_plugin_tests loads the built CLAP binary through a test host (ctest runs it on both
 # architectures). nmr_au_oop_host needs the installed AU, so scripts/validate.sh runs it.
-add_executable(nmr_plugin_tests plugin_test.cpp clap_host.cpp)
+add_executable(nmr_plugin_tests plugin_test.cpp plugin_send_test.cpp clap_host.cpp)
 target_include_directories(nmr_plugin_tests PRIVATE "${CMAKE_SOURCE_DIR}/Tests/cpp/third_party")
 target_compile_definitions(nmr_plugin_tests PRIVATE
   NMR_TEST_CLAP_BINARY="$<TARGET_FILE:nmr_plugin_clap>"

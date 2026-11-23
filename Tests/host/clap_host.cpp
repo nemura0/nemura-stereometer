@@ -1,15 +1,36 @@
 #include "clap_host.h"
 
 #include <dlfcn.h>
+#include <nmr/shm_transport.h>
+#include <unistd.h>
 
 #include <algorithm>
+#include <utility>
+#include <cstdio>
 #include <cstring>
+#include <string>
 
 namespace nmr::test {
 
 namespace {
 
-const void* hostExtension(const clap_host_t*, const char*) { return nullptr; }
+bool trackInfo(const clap_host_t* host, clap_track_info_t* info) {
+  const auto* instance = static_cast<const ClapInstance*>(host->host_data);
+  *info = clap_track_info_t{};
+  info->flags = CLAP_TRACK_INFO_HAS_TRACK_NAME;
+  std::snprintf(info->name, sizeof(info->name), "%s", instance->trackName().c_str());
+  return true;
+}
+
+const clap_host_track_info_t kTrackInfo = {trackInfo};
+
+const void* hostExtension(const clap_host_t* host, const char* id) {
+  const auto* instance = static_cast<const ClapInstance*>(host->host_data);
+  if (std::strcmp(id, CLAP_EXT_TRACK_INFO) == 0 && !instance->trackName().empty()) {
+    return &kTrackInfo;
+  }
+  return nullptr;
+}
 void hostRequest(const clap_host_t*) {}
 
 uint32_t eventsSize(const clap_input_events_t*) { return 0; }
@@ -54,6 +75,9 @@ ClapLibrary& ClapLibrary::shared() {
 }
 
 ClapLibrary::ClapLibrary() {
+  send_prefix_ = "/nmr.t" + std::to_string(::getpid()) + ".h";
+  shm::unlinkAll(send_prefix_);
+  ::setenv("NMR_TEST_SHM_PREFIX", send_prefix_.c_str(), 1);
   handle_ = dlopen(NMR_TEST_CLAP_BINARY, RTLD_NOW | RTLD_LOCAL);
   if (handle_ == nullptr) {
     error_ = dlerror();
@@ -71,10 +95,12 @@ ClapLibrary::ClapLibrary() {
 
 ClapLibrary::~ClapLibrary() {
   if (entry_ != nullptr) entry_->deinit();
+  shm::unlinkAll(send_prefix_);
   // The library stays loaded: its ObjC classes cannot be unloaded.
 }
 
-ClapInstance::ClapInstance() {
+ClapInstance::ClapInstance(std::string track_name) : track_name_(std::move(track_name)) {
+  host_.host_data = this;
   host_.clap_version = CLAP_VERSION;
   host_.name = "nmr test host";
   host_.vendor = "test";
@@ -143,6 +169,12 @@ clap_process_status ClapInstance::process(Channels& in, Channels& out, bool in_p
   process.in_events = &kNoInput;
   process.out_events = &kNoOutput;
   return plugin_->process(plugin_, &process);
+}
+
+void ClapInstance::renameTrack(std::string name) {
+  track_name_ = std::move(name);
+  const auto* ext = extension<clap_plugin_track_info_t>(CLAP_EXT_TRACK_INFO);
+  if (ext != nullptr) ext->changed(plugin_);
 }
 
 bool ClapInstance::save(std::string& state, size_t chunk) const {

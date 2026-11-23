@@ -1,12 +1,15 @@
 #include "plugin.h"
 
 #include <nmr/frame_ring.h>
+#include <nmr/instance_sender.h>
 #include <nmr/presets.h>
 #include <nmr/product_config.h>
 #include <nmr/settings_json.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -76,9 +79,26 @@ class DenormalScope {};
 constexpr uint32_t kEditorRingFrames = 1 << 16;
 constexpr double kDefaultSampleRate = 48000;
 
+// Where instances send: the app's registry, or a test's (NMR_TEST_SHM_PREFIX, a test prefix only).
+std::string sendPrefix() {
+  const char* test = std::getenv("NMR_TEST_SHM_PREFIX");
+  const std::string_view prefix = test != nullptr ? test : "";
+  if (prefix.rfind("/nmr.t", 0) == 0 && prefix.size() <= 24) return std::string(prefix);
+  return NMR_SHM_PREFIX;
+}
+
+// "Stereometer 1", "Stereometer 2", … in the order instances are created in this process.
+std::string defaultName() {
+  static std::atomic<uint32_t> created{0};
+  return std::string(NMR_PRODUCT_SHORT) + " " + std::to_string(created.fetch_add(1) + 1);
+}
+
 struct Instance {
   clap_plugin_t clap{};
   const clap_host_t* host = nullptr;
+  const clap_host_track_info_t* track_info = nullptr;  // the host's, if it offers one
+  InstanceSender sender{sendPrefix()};  // writes on the audio thread, until deactivate
+  std::string default_name = defaultName();
   LocalFrameRing editor_ring{kEditorRingFrames};  // outlives the editor (declared first)
   FrameRingView ring_writer = editor_ring.view();  // audio thread only
   double sample_rate = kDefaultSampleRate;          // main thread
@@ -95,14 +115,16 @@ Instance* self(const clap_plugin_t* plugin) { return static_cast<Instance*>(plug
 // ---------------------------------------------------------------------------------------------
 // Audio thread
 
-// The editor's copy of what passes through: a wait-free write into the local ring (memcpy and
-// atomics). Reads the output, which holds every frame (a constant input is filled out).
-void feedEditor(Instance& instance, const clap_audio_buffer_t& out, uint32_t frames) noexcept {
+// The editor's and the app's copies of what passes through: wait-free writes into the local ring
+// and the shared one (memcpy and atomics). Reads the output, which holds every frame (a constant
+// input is filled out).
+void feedMeters(Instance& instance, const clap_audio_buffer_t& out, uint32_t frames) noexcept {
   if (out.channel_count == 0 || out.data32 == nullptr) return;
   const float* left = out.data32[0];
   const float* right = out.data32[out.channel_count > 1 ? 1 : 0];  // mono: both sides
   if (left == nullptr || right == nullptr) return;
   instance.ring_writer.writeSplit(left, right, frames);
+  instance.sender.write(left, right, frames);
 }
 
 clap_process_status process(const clap_plugin_t* plugin, const clap_process_t* process) {
@@ -135,7 +157,7 @@ clap_process_status process(const clap_plugin_t* plugin, const clap_process_t* p
     }
   }
   out.constant_mask = 0;
-  feedEditor(*self(plugin), out, frames);  // reads the output only
+  feedMeters(*self(plugin), out, frames);  // reads the output only
   return CLAP_PROCESS_CONTINUE;
 }
 
@@ -210,6 +232,37 @@ uint32_t latencyGet(const clap_plugin_t*) { return 0; }
 const clap_plugin_latency_t kLatency = {latencyGet};
 
 // ---------------------------------------------------------------------------------------------
+// Sending (main thread)
+
+// The name the app lists: the user's source name, else the track's, else "Stereometer N".
+std::string sourceName(const Instance& instance) {
+  const std::string& chosen = instance.settings.text(settings::Id::kSourceName);
+  if (!chosen.empty()) return chosen;
+  clap_track_info_t info{};
+  if (instance.track_info != nullptr && instance.track_info->get(instance.host, &info) &&
+      (info.flags & CLAP_TRACK_INFO_HAS_TRACK_NAME) != 0 && info.name[0] != '\0') {
+    return std::string(info.name, strnlen(info.name, sizeof(info.name)));
+  }
+  return instance.default_name;
+}
+
+// After the settings change: send or stop sending, under the current name.
+void applySendSettings(Instance& instance) {
+  instance.sender.setEnabled(instance.settings.flag(settings::Id::kSendToApp));
+  instance.sender.rename(sourceName(instance));
+}
+
+void trackInfoChanged(const clap_plugin_t* plugin) {
+  try {
+    Instance* instance = self(plugin);
+    instance->sender.rename(sourceName(*instance));
+  } catch (...) {  // out of memory: keep the old name
+  }
+}
+
+const clap_plugin_track_info_t kTrackInfo = {trackInfoChanged};
+
+// ---------------------------------------------------------------------------------------------
 // clap.state
 
 bool stateSave(const clap_plugin_t* plugin, const clap_ostream_t* stream) {
@@ -246,7 +299,9 @@ bool stateLoad(const clap_plugin_t* plugin, const clap_istream_t* stream) {
     } else if (report.status != settings::Status::kOk) {
       return false;
     }
-    self(plugin)->settings = std::move(loaded);
+    Instance* instance = self(plugin);
+    instance->settings = std::move(loaded);
+    applySendSettings(*instance);
     return true;
   } catch (...) {
     return false;
@@ -351,7 +406,17 @@ const clap_plugin_gui_t kGui = {
 // ---------------------------------------------------------------------------------------------
 // clap_plugin
 
-bool pluginInit(const clap_plugin_t*) { return true; }
+bool pluginInit(const clap_plugin_t* plugin) {
+  Instance* instance = self(plugin);
+  instance->track_info = static_cast<const clap_host_track_info_t*>(
+      instance->host->get_extension(instance->host, CLAP_EXT_TRACK_INFO));
+  try {
+    applySendSettings(*instance);
+  } catch (...) {
+    return false;
+  }
+  return true;
+}
 
 void pluginDestroy(const clap_plugin_t* plugin) { delete self(plugin); }
 
@@ -359,11 +424,19 @@ bool pluginActivate(const clap_plugin_t* plugin, double sample_rate, uint32_t, u
   Instance* instance = self(plugin);
   instance->active = true;
   instance->sample_rate = sample_rate;
+  try {
+    instance->sender.start(sample_rate, sourceName(*instance));
+  } catch (...) {  // out of memory: process without sending
+  }
   if (instance->editor) instance->editor->setSource(instance->editor_ring.view(), sample_rate);
   return true;
 }
 
-void pluginDeactivate(const clap_plugin_t* plugin) { self(plugin)->active = false; }
+void pluginDeactivate(const clap_plugin_t* plugin) {
+  Instance* instance = self(plugin);
+  instance->sender.stop();  // the audio thread no longer runs: nothing is writing
+  instance->active = false;
+}
 
 bool pluginStartProcessing(const clap_plugin_t*) { return true; }
 
@@ -380,6 +453,7 @@ const void* pluginGetExtension(const clap_plugin_t*, const char* id) {
   if (std::strcmp(id, CLAP_EXT_LATENCY) == 0) return &kLatency;
   if (std::strcmp(id, CLAP_EXT_STATE) == 0) return &kState;
   if (std::strcmp(id, CLAP_EXT_GUI) == 0) return &kGui;
+  if (std::strcmp(id, CLAP_EXT_TRACK_INFO) == 0) return &kTrackInfo;
   return nullptr;
 }
 

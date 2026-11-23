@@ -11,6 +11,7 @@ add_executable(nmr_tests
   frame_rate_test.cpp
   guides_test.cpp
   idle_test.cpp
+  instance_sender_test.cpp
   instance_source_test.cpp
   layout_test.cpp
   meter_bars_test.cpp
