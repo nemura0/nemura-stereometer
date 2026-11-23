@@ -108,6 +108,8 @@ Legend: `[x]` done and verified, `[~]` in progress / partially verified, `[ ]` n
 - [x] Still blurry on screen (point 5.9 pt, density 5, glow 65 %): sharp soft dots, density only
       where there is a gap, a halo that follows the trace (DECISIONS: sharp dots)
 - [x] Maximize and restore by double-clicking the meter's top edge (DECISIONS: fill the screen)
+- The owner checked the sharpness and the double-click zoom on screen on 2026-11-23: works.
+  Dragging anywhere on the meter still moves it (the owner chose to keep that)
 
 ## Phase 4: plugin
 
