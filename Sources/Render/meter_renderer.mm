@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 
 namespace nmr {
 
@@ -27,9 +28,9 @@ struct ScopeUniforms {
   uint32_t count;
   uint32_t shape;
   uint32_t solid;
-  float soft_edge_px;
 };
-static_assert(sizeof(ScopeUniforms) == 80);
+static_assert(sizeof(ScopeUniforms) == 80);  // 76 bytes of fields, padded to float4 alignment
+static_assert(offsetof(ScopeUniforms, solid) == 72);  // the MSL struct's last field
 
 struct CompositeUniforms {
   simd_float4 scope_rect;
@@ -268,7 +269,7 @@ bool MeterRenderer::encode(id<MTLCommandBuffer> commands, id<MTLTexture> target,
       light_rect_.height >= 1 &&
       ensureScope(static_cast<uint32_t>(light_rect_.width),
                   static_cast<uint32_t>(light_rect_.height))) {
-    encodeScope(commands, slot, frame, px);
+    encodeScope(commands, slot, frame);
     // The bloom's texel stays kGlowTexelPt points wide, so it spreads as far at any scale.
     const auto divisor = static_cast<uint32_t>(
         std::clamp(std::round(px * kGlowTexelPt), 1.0f, float{kMaxGlowDivisor}));
@@ -302,7 +303,7 @@ void MeterRenderer::placeLight(id<MTLTexture> target, float scale, float size_px
 }
 
 void MeterRenderer::encodeScope(id<MTLCommandBuffer> commands, id<MTLBuffer> slot,
-                                const MeterFrame& frame, float scale) {
+                                const MeterFrame& frame) {
   const bool clear = pending_clear_ || scope_clear_;
   scope_clear_ = false;
   if (clear) has_previous_ = false;  // a new trail joins nothing to the last one
@@ -355,7 +356,6 @@ void MeterRenderer::encodeScope(id<MTLCommandBuffer> commands, id<MTLBuffer> slo
     u.count = static_cast<uint32_t>(available);
     u.shape = static_cast<uint32_t>(frame.shape);
     u.solid = frame.look.solid ? 1 : 0;
-    u.soft_edge_px = kSoftEdgePt * scale;
     const bool lines = frame.draw == DrawStyle::kLines;
     [encoder setRenderPipelineState:lines ? trace_ : dots_];
     [encoder setVertexBuffer:slot offset:0 atIndex:0];

@@ -23,7 +23,6 @@ struct ScopeUniforms {
   uint count;
   uint shape;
   uint solid;
-  float soft_edge_px;  // a soft dot's edge, at most
 };
 
 struct CompositeUniforms {
@@ -190,13 +189,14 @@ vertex DotVertex dot_vertex(uint vid [[vertex_id]], uint iid [[instance_id]],
 fragment float4 dot_fragment(DotVertex in [[stage_in]], constant ScopeUniforms& u [[buffer(1)]]) {
   const float2 d = in.position.xy - in.center;
   float coverage;
-  if (u.shape == 0) {  // soft: full in the middle, fading smoothly to nothing half a pixel past
-    // the radius (as the circle's antialiasing does) over the outer soft_edge_px (all of it for
-    // small dots), so a bigger dot is a bigger bead and the smallest still lights a pixel
+  if (u.shape == 0) {  // soft: a bead of light, brightest in the middle and falling smoothly to
+    // nothing half a pixel past the radius (as the circle's antialiasing does), (1 - x²)² across
+    // it. Scaled to carry a circle's light (π r²: the profile alone holds a third of its disc),
+    // so the soft shape is no dimmer than the circle, and the smallest dot still lights a pixel.
     const float outer = in.radius + 0.5;
-    const float edge = clamp(u.soft_edge_px, 0.5, outer);
-    const float t = max(length(d) - (outer - edge), 0.0) / edge;
-    coverage = pow(saturate(1.0 - t * t), 1.5);
+    const float x = length(d) / outer;
+    const float profile = saturate(1.0 - x * x);
+    coverage = 3.0 * (in.radius * in.radius) / (outer * outer) * profile * profile;
   } else if (u.shape == 1) {  // circle
     coverage = saturate(in.radius + 0.5 - length(d));
   } else {  // square

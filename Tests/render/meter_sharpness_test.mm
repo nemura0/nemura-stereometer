@@ -1,6 +1,9 @@
-// GPU tests of how sharp the scope reads: soft dots end at their edge, density adds points only
-// where there is a gap to fill, and the glow's halo never hazes over a dim cloud of dots.
+// GPU tests of how sharp the scope reads: soft dots are beads that end at their edge, density
+// adds points only where there is a gap to fill, and the glow's halo never hazes over a dim
+// cloud of dots.
 #include "meter_harness.h"
+
+using nmr::PointShape;
 
 namespace {
 
@@ -11,7 +14,7 @@ float pixelsPerUnit(const Harness& h) {
 
 }  // namespace
 
-TEST_CASE("meter sharpness: a big soft dot ends at its edge, with no haze past it") {
+TEST_CASE("meter sharpness: a big soft dot is a bead, brightest at its center, dark past it") {
   Harness h;
   REQUIRE_GPU(h);
   const float row = std::round(h.scope().y + h.scope().height / 2);
@@ -19,35 +22,49 @@ TEST_CASE("meter sharpness: a big soft dot ends at its edge, with no haze past i
   MeterFrame f = h.frame();
   f.points = dot;
   f.style.size_px = 24;  // radius 12
-  f.style.intensity = 0.4f;
+  f.style.intensity = 0.1f;
   f.clear = true;
-  REQUIRE(h.render(f));
+  REQUIRE(h.render(f, 2));
   const float x = h.place(dot[0])[0];
   const float center = h.pixel(x, row).peak();
-  INFO("center " << center << ", half radius " << h.pixel(x + 6, row).peak() << ", past the edge "
-                 << h.pixel(x + 13, row).peak());
-  CHECK(center > 0.3f);
-  CHECK(h.pixel(x + 6, row).peak() > 0.45f * center);  // full inside…
-  CHECK(h.pixel(x + 13, row).peak() < 0.004f);          // …and nothing past the edge
+  INFO("center " << center << ", half radius " << h.pixel(x + 6, row).peak() << ", near the edge "
+                 << h.pixel(x + 10, row).peak() << ", past it " << h.pixel(x + 13, row).peak());
+  CHECK(center > 0.2f);
+  CHECK(center > 1.3f * h.pixel(x + 6, row).peak());  // a bright core, not a flat disc…
+  CHECK(h.pixel(x + 6, row).peak() > 1.5f * h.pixel(x + 10, row).peak());
+  CHECK(h.pixel(x + 10, row).peak() > 0.01f);  // …falling off to its edge…
+  CHECK(h.pixel(x + 13, row).peak() < 0.004f);  // …and nothing past it
 }
 
-TEST_CASE("meter sharpness: a bigger soft dot is a bigger bead, with a small one's sharp edge") {
+TEST_CASE("meter sharpness: a soft dot carries the light of a circle of its size") {
   Harness h;
   REQUIRE_GPU(h);
   const float row = std::round(h.scope().y + h.scope().height / 2);
   const std::vector<ScopePoint> dot{{0, h.scopeY(row + 0.5f)}};
   MeterFrame f = h.frame();
   f.points = dot;
-  f.style.size_px = 24;  // radius 12; at scale 2 the soft edge is 4 px of it
-  f.style.intensity = 0.4f;
+  f.style.size_px = 24;
+  f.style.intensity = 0.2f;
+  f.look.whiten = 0;  // so each channel is 1 − exp(−light × gain), and the light comes back
   f.clear = true;
-  REQUIRE(h.render(f, 2));
   const float x = h.place(dot[0])[0];
-  const float center = h.pixel(x, row).peak();
-  INFO("center " << center << ", 7 px out " << h.pixel(x + 7, row).peak());
-  CHECK(h.pixel(x + 7, row).peak() > 0.9f * center);  // full up to the edge…
-  CHECK(h.pixel(x + 10, row).peak() > 0.1f * center);
-  CHECK(h.pixel(x + 13, row).peak() < 0.004f);       // …which fades within it
+  const auto total = [&](PointShape shape) {
+    f.shape = shape;
+    REQUIRE(h.render(f));
+    float sum = 0;
+    for (float dy = -15; dy <= 15; ++dy) {
+      for (float dx = -15; dx <= 15; ++dx) {
+        const float shown = std::min(h.pixel(x + dx, row + dy).peak(), 0.999f);
+        sum += -std::log(1 - shown) / MeterRenderer::kToneGain;
+      }
+    }
+    return sum;
+  };
+  const float circle = total(PointShape::kCircle);
+  const float soft = total(PointShape::kSoft);
+  INFO("soft " << soft << ", circle " << circle);
+  CHECK(circle > 0);
+  CHECK(soft == doctest::Approx(circle).epsilon(0.05));
 }
 
 TEST_CASE("meter sharpness: the smallest soft dot lights a pixel wherever it lands") {
