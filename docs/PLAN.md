@@ -121,7 +121,9 @@ Legend: `[x]` done and verified, `[~]` in progress / partially verified, `[ ]` n
       (DECISIONS: plugin editor)
 - [x] Every validator green on both architectures; OOP AU test delivers audio to the app
       (DECISIONS: OOP AU send test)
-- [ ] **CHECKPOINT C** (10-minute DAW checklist for Ableton and FL)
+- [x] **CHECKPOINT C** (10-minute DAW checklist for Ableton and FL): VST3, AU and CLAP work in
+      Ableton and FL Studio (owner, 2026-11-24); soft dots made beads after their screenshot
+      (DECISIONS: bead dots)
 
 ## Phase 5: polish, performance, release
 
