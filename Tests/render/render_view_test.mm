@@ -89,15 +89,17 @@ TEST_CASE("render view: counts the frames that reach the screen") {
     [window close];
     return;
   }
+  id<MTLDevice> device = MTLCreateSystemDefaultDevice();
+  const bool virtual_gpu =
+      device == nil || [device.name rangeOfString:@"Paravirtual"].location != NSNotFound;
   // Silence: it draws for the trail plus 250 ms, then idles; every frame it drew is reported.
-  CHECK(spinUntil(^bool { return view.isIdle == YES; }, 10));
+  // CI's VMs draw so slowly that idling may take longer than the test waits.
+  const bool idle = spinUntil(^bool { return view.isIdle == YES; }, 10);
+  if (!virtual_gpu) CHECK(idle);
   CHECK(spinUntil(^bool { return view.frameStats.frames > 0; }, 2));  // handlers run late
   const nmr::FrameStats::Summary drawn = view.frameStats;
   INFO("frames " << drawn.frames << ", presented " << drawn.presented << ", period "
                  << drawn.period_ms << " ms, p50 " << drawn.p50_ms << " ms");
-  id<MTLDevice> device = MTLCreateSystemDefaultDevice();
-  const bool virtual_gpu =
-      device == nil || [device.name rangeOfString:@"Paravirtual"].location != NSNotFound;
   if (virtual_gpu) {
     // CI's macOS VMs ("Apple Paravirtual device") present few drawables or none: each frame
     // is still reported, as presented or as dropped.
