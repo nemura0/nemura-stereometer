@@ -95,10 +95,19 @@ TEST_CASE("render view: counts the frames that reach the screen") {
   const nmr::FrameStats::Summary drawn = view.frameStats;
   INFO("frames " << drawn.frames << ", presented " << drawn.presented << ", period "
                  << drawn.period_ms << " ms, p50 " << drawn.p50_ms << " ms");
-  CHECK(drawn.presented > 3);
-  CHECK(drawn.period_ms >= 1000.0 / 240);
-  CHECK(drawn.period_ms <= 1000.0 / 30);
-  CHECK(drawn.intervals > 0);
+  id<MTLDevice> device = MTLCreateSystemDefaultDevice();
+  const bool virtual_gpu =
+      device == nil || [device.name rangeOfString:@"Paravirtual"].location != NSNotFound;
+  if (virtual_gpu) {
+    // CI's macOS VMs ("Apple Paravirtual device") present few drawables or none: each frame
+    // is still reported, as presented or as dropped.
+    CHECK(drawn.presented + drawn.dropped >= drawn.frames);
+  } else {
+    CHECK(drawn.presented > 3);
+    CHECK(drawn.period_ms >= 1000.0 / 240);
+    CHECK(drawn.period_ms <= 1000.0 / 30);
+    CHECK(drawn.intervals > 0);
+  }
   [view resetFrameStats];
   CHECK(view.frameStats.frames == 0);
   [window close];
