@@ -211,7 +211,7 @@ bool MeterRenderer::ensureGlow(uint32_t divisor) {
 }
 
 // The bloom: the light averaged over glow_divisor_ × glow_divisor_ pixel blocks, then a
-// Gaussian blur across and down.
+// Gaussian blur. Two passes: each render pass costs the CPU far more than its few draws.
 void MeterRenderer::encodeGlow(id<MTLCommandBuffer> commands) {
   const auto pass = [&](id<MTLTexture> into, id<MTLRenderPipelineState> state, id<MTLTexture> from,
                         const void* bytes, NSUInteger length) {
@@ -222,16 +222,13 @@ void MeterRenderer::encodeGlow(id<MTLCommandBuffer> commands) {
     id<MTLRenderCommandEncoder> encoder = [commands renderCommandEncoderWithDescriptor:d];
     [encoder setRenderPipelineState:state];
     [encoder setFragmentTexture:from atIndex:0];
-    [encoder setFragmentBytes:bytes length:length atIndex:0];
+    if (bytes != nullptr) [encoder setFragmentBytes:bytes length:length atIndex:0];
     [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
     [encoder endEncoding];
   };
   const uint32_t divisor = glow_divisor_;
-  const simd_float2 across = simd_make_float2(1, 0);
-  const simd_float2 down = simd_make_float2(0, 1);
-  pass(glow_, glow_down_, scope_, &divisor, sizeof(divisor));
-  pass(glow_spare_, glow_blur_, glow_, &across, sizeof(across));
-  pass(glow_, glow_blur_, glow_spare_, &down, sizeof(down));
+  pass(glow_spare_, glow_down_, scope_, &divisor, sizeof(divisor));
+  pass(glow_, glow_blur_, glow_spare_, nullptr, 0);
 }
 
 bool MeterRenderer::encode(id<MTLCommandBuffer> commands, id<MTLTexture> target,

@@ -1,10 +1,12 @@
 #include "nmr/wav_file.h"
 
+#include <fcntl.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <cstring>
-#include <fstream>
 
 namespace nmr::wav {
 
@@ -119,23 +121,35 @@ std::optional<Audio> decode(const uint8_t* bytes, size_t size, Error& error,
 }
 
 std::optional<Audio> read(const std::string& path, Error& error) {
+  const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
   struct stat info {};
-  if (::stat(path.c_str(), &info) != 0 || !S_ISREG(info.st_mode)) {
+  if (fd < 0 || ::fstat(fd, &info) != 0 || !S_ISREG(info.st_mode)) {
+    if (fd >= 0) ::close(fd);
     error = Error::kUnreadable;
     return std::nullopt;
   }
+  const auto size = static_cast<size_t>(info.st_size);
   if (static_cast<uint64_t>(info.st_size) > kMaxBytes) {
+    ::close(fd);
     error = Error::kTooLong;
     return std::nullopt;
   }
-  std::ifstream file(path, std::ios::binary);
-  std::vector<uint8_t> bytes(static_cast<size_t>(info.st_size));
-  if (!file || !file.read(reinterpret_cast<char*>(bytes.data()),
-                          static_cast<std::streamsize>(bytes.size()))) {
+  if (size == 0) {  // nothing to map, and no header
+    ::close(fd);
+    error = Error::kNotWav;
+    return std::nullopt;
+  }
+  // Mapped, not read into a buffer: file pages are clean and leave with the mapping, while a
+  // freed buffer this large stays dirty in malloc's cache and counts in the footprint.
+  void* mapped = ::mmap(nullptr, size, PROT_READ, MAP_PRIVATE, fd, 0);
+  ::close(fd);
+  if (mapped == MAP_FAILED) {
     error = Error::kUnreadable;
     return std::nullopt;
   }
-  return decode(bytes.data(), bytes.size(), error);
+  auto audio = decode(static_cast<const uint8_t*>(mapped), size, error);
+  ::munmap(mapped, size);
+  return audio;
 }
 
 }  // namespace nmr::wav

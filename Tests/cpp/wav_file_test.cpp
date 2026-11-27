@@ -4,7 +4,10 @@
 
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -210,4 +213,25 @@ TEST_CASE("wav: 24-bit extremes, a short fmt, and float64 beyond float's range")
   wav::Error error = wav::Error::kNone;
   CHECK_FALSE(wav::decode(bytes.data(), bytes.size(), error));
   CHECK(error == wav::Error::kUnsupported);
+}
+
+TEST_CASE("wav: read decodes a file on disk, and an empty file says it is not a WAV") {
+  const auto dir = std::filesystem::temp_directory_path();
+  const std::string path = (dir / "nmr_wav_read_test.wav").string();
+  const std::vector<uint8_t> bytes = file(3, 2, 44100, 32, floats({0.25f, -0.5f, 1.0f, 0.0f}));
+  {
+    std::ofstream out(path, std::ios::binary);
+    out.write(reinterpret_cast<const char*>(bytes.data()),
+              static_cast<std::streamsize>(bytes.size()));
+  }
+  wav::Error error = wav::Error::kUnreadable;
+  const auto audio = wav::read(path, error);
+  REQUIRE(audio);
+  CHECK(error == wav::Error::kNone);
+  CHECK(audio->sample_rate == 44100);
+  CHECK(audio->stereo == std::vector<float>{0.25f, -0.5f, 1.0f, 0.0f});
+  { std::ofstream truncate(path, std::ios::binary | std::ios::trunc); }
+  CHECK_FALSE(wav::read(path, error));
+  CHECK(error == wav::Error::kNotWav);
+  std::remove(path.c_str());
 }

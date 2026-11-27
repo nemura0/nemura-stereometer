@@ -294,18 +294,29 @@ fragment float4 glow_down_fragment(ImageVertex in [[stage_in]],
   return float4(sum / max(float(count.x * count.y), 1.0), 0.0);
 }
 
+// The 9-tap Gaussian across and down in one pass: 5 × 5 bilinear taps whose offsets and
+// weights are the 1D kernel's in each axis. Bilinear sampling factors per axis, so this is
+// the separable blur's product kernel exactly, with one render pass instead of two.
+// In the constant address space: a function's local array indexed in a loop lands in private
+// memory, for which the driver reserves scratch for every GPU thread (about 10 MB here).
+constant float kGlowOffsets[5] = {-3.2307692308, -1.3846153846, 0.0, 1.3846153846, 3.2307692308};
+constant float kGlowWeights[5] = {0.0702702703, 0.3162162162, 0.2270270270, 0.3162162162,
+                                  0.0702702703};
+
 fragment float4 glow_blur_fragment(ImageVertex in [[stage_in]],
-                                   constant float2& direction [[buffer(0)]],
                                    texture2d<float> source [[texture(0)]]) {
   constexpr sampler linear(filter::linear, address::clamp_to_edge);
   const float2 size = float2(source.get_width(), source.get_height());
   const float2 uv = in.position.xy / size;
-  const float2 step = direction / size;
-  float3 sum = 0.2270270270 * source.sample(linear, uv).rgb;
-  sum += 0.3162162162 * (source.sample(linear, uv + 1.3846153846 * step).rgb +
-                         source.sample(linear, uv - 1.3846153846 * step).rgb);
-  sum += 0.0702702703 * (source.sample(linear, uv + 3.2307692308 * step).rgb +
-                         source.sample(linear, uv - 3.2307692308 * step).rgb);
+  float3 sum = 0.0;
+  for (int y = 0; y < 5; ++y) {
+    float3 row = 0.0;
+    for (int x = 0; x < 5; ++x) {
+      const float2 offset = float2(kGlowOffsets[x], kGlowOffsets[y]);
+      row += kGlowWeights[x] * source.sample(linear, uv + offset / size).rgb;
+    }
+    sum += kGlowWeights[y] * row;
+  }
   return float4(sum, 0.0);
 }
 
