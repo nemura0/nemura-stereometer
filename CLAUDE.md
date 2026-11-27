@@ -17,6 +17,7 @@ scripts/install-plugins.sh       # copy CLAP/VST3/AU to ~/Library/Audio/Plug-Ins
 scripts/validate.sh              # auval, pluginval (arm64 + x86_64), clap-validator, OOP AU test
 scripts/package.sh [dmg|pkg|checksums]  # build/dist: app .dmg, plugins .pkg, SHA256SUMS
 scripts/gen-config.sh [--check]  # regenerate Sources/Core/include/nmr/product_config.h
+scripts/rename.sh --name "…" [--short …] [--vendor …] [--ids …] [--dry-run]  # rename the product
 scripts/fetch-deps.sh            # pinned CLAP / clap-wrapper / VST3 SDK / AudioUnitSDK into external/
 scripts/check-sources.sh         # CMake and SwiftPM compile the same Sources/{Core,Render,CoreC}
 scripts/capture-probe.sh [s]     # end-to-end system-audio capture check with the built app (0 = audio arrived)
