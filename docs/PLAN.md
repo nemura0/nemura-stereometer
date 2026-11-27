@@ -134,7 +134,8 @@ Legend: `[x]` done and verified, `[~]` in progress / partially verified, `[ ]` n
   in `release.yml`
 - [x] `release.yml` on `v*`: build, test, validate, sign, package, GitHub Release + SHA-256
   (dry run green 2026-11-27, run 46059402821: signed, 9/9 validators on the installed .pkg)
-- [ ] Homebrew tap `nemura0/homebrew-tap` (casks `stereometer`, `stereometer-plugins`, self-updating)
+- [x] Homebrew tap `nemura0/homebrew-tap` (casks `stereometer`, `stereometer-plugins`, self-updating)
+  (created 2026-11-27; the casks wait at 1.0.0 with no hash until the first release is published)
 - [x] README (English): features, install, unsigned-app steps, permission/privacy, DAW usage, build
   (screenshots from `nmr_snapshot` in docs/images; an app GIF needs a screen recording by the owner)
 - [x] `scripts/rename.sh` renames the product in one step (§3)
