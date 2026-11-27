@@ -95,6 +95,12 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$kc" \
             >/dev/null
           rm -f "$NMR_SIGNING_DIR/identity.p12"
+          # codesign resolves --sign <hash> only through the search list, even with --keychain.
+          # The runner is a throwaway VM, so adding it there is safe (on a Mac it never is).
+          existing="$(security list-keychains -d user | tr -d '"' | xargs)"
+          # shellcheck disable=SC2086 # one keychain path per word
+          security list-keychains -d user -s "$kc" $existing
+          security find-identity -p codesigning "$kc"
 
       - name: Build plugins, C++ tests and app
         run: scripts/build.sh all

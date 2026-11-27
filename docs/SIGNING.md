@@ -74,7 +74,12 @@ security set-keychain-settings "$kc"
 security unlock-keychain -p "$(cat "$NMR_SIGNING_DIR/keychain-password")" "$kc"
 security import "$NMR_SIGNING_DIR/identity.p12" -k "$kc" -P "$NMR_SIGNING_P12_PASSWORD" -T /usr/bin/codesign
 security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$(cat "$NMR_SIGNING_DIR/keychain-password")" "$kc"
+security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
 ```
+
+The last line is CI only: `codesign --sign <hash>` finds the identity only through the search list,
+even with `--keychain`. On a runner that is a throwaway VM; on your Mac the keychain stays off the
+search list.
 
 The CI workflow for pushes and pull requests (`ci.yml`) does not need the identity: without it
 `scripts/sign.sh` signs ad-hoc and prints a warning.
