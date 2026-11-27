@@ -132,8 +132,8 @@ Legend: `[x]` done and verified, `[~]` in progress / partially verified, `[ ]` n
 - [x] `.dmg` (app) and `.pkg` (AU/VST3/CLAP to /Library/Audio/Plug-Ins, per-format choices):
   `scripts/package.sh`; contents, signatures and choices checked locally, the install itself
   in `release.yml`
-- [ ] `release.yml` on `v*`: build, test, validate, sign, package, GitHub Release + SHA-256
-  (written; first run waits for the signing secrets, docs/SIGNING.md)
+- [x] `release.yml` on `v*`: build, test, validate, sign, package, GitHub Release + SHA-256
+  (dry run green 2026-11-27, run 46059402821: signed, 9/9 validators on the installed .pkg)
 - [ ] Homebrew tap `nemura0/homebrew-tap` (casks `stereometer`, `stereometer-plugins`, self-updating)
 - [ ] README (English): features, install, unsigned-app steps, permission/privacy, DAW usage, build
 - [ ] `scripts/rename.sh` renames the product in one step (§3)
