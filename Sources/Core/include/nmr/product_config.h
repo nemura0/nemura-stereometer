@@ -8,9 +8,9 @@
 #define NMR_URL "https://github.com/nemura0/nemura-stereometer"
 #define NMR_DESCRIPTION "Goniometer, vectorscope, correlation and balance meter."
 
-#define NMR_VERSION "0.1.0"
-#define NMR_VERSION_MAJOR 0
-#define NMR_VERSION_MINOR 1
+#define NMR_VERSION "1.0.0"
+#define NMR_VERSION_MAJOR 1
+#define NMR_VERSION_MINOR 0
 #define NMR_VERSION_PATCH 0
 #define NMR_BUILD 1
 
