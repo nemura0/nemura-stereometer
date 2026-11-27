@@ -1,0 +1,203 @@
+# Builds, tests, packages and validates a release, then drafts it on GitHub.
+#
+#   push of a v* tag    everything below, then a *draft* GitHub Release with the .dmg, the .pkg and
+#                       SHA256SUMS. A person publishes it (`gh release edit <tag> --draft=false`).
+#   manual run          the same up to the checksums (a dry run): the files are kept as a workflow
+#                       artifact and no release is created.
+#
+# Signing needs the NMR_SIGNING_P12_BASE64 and NMR_SIGNING_P12_PASSWORD secrets (docs/SIGNING.md);
+# without them the run fails rather than ship an ad-hoc build, whose audio-capture permission
+# would not survive an update. The validators run against the plugins as the .pkg installs them.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PLUGINVAL_VERSION: v1.0.4
+  PLUGINVAL_TEAM_ID: YLB5W3GE5T # Tracktion Software Corp's Developer ID: checked before it runs
+  CLAP_VALIDATOR_VERSION: "0.4.1"
+  CLAP_VALIDATOR_ASSET: clap-validator-0.4.1-127-g152b982-macos-universal.zip
+  CLAP_VALIDATOR_SHA256: bbec8cd7d18274e549d5d8c12ece3cec54be966129388dd2e742b9957f2ba9f1
+
+jobs:
+  release:
+    name: Build, validate, package
+    runs-on: macos-26
+    timeout-minutes: 90
+    permissions:
+      contents: write # the draft release (tag pushes only)
+    env:
+      NMR_WERROR: "ON"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: The tag matches config/product.env
+        if: github.ref_type == 'tag'
+        run: |
+          source config/product.env
+          if [[ "$GITHUB_REF_NAME" != "v$NMR_VERSION" ]]; then
+            echo "::error::tag $GITHUB_REF_NAME, but config/product.env has version $NMR_VERSION"
+            exit 1
+          fi
+
+      - name: Select the newest Xcode on the image
+        run: |
+          xcode="$(ls -d /Applications/Xcode_*.app | grep -viE 'beta|release.?candidate|_rc' |
+            sort -V | tail -1)"
+          sudo xcode-select -s "$xcode"
+          xcodebuild -version
+
+      - name: Install Rosetta (x86_64 tests and validators)
+        run: |
+          if ! /usr/bin/arch -x86_64 /usr/bin/true 2>/dev/null; then
+            sudo softwareupdate --install-rosetta --agree-to-license
+          fi
+
+      - name: Cache pinned SDKs
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: external
+          key: sdks-${{ runner.os }}-${{ hashFiles('scripts/fetch-deps.sh') }}
+
+      - name: Import the signing identity
+        env:
+          P12_BASE64: ${{ secrets.NMR_SIGNING_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.NMR_SIGNING_P12_PASSWORD }}
+        run: |
+          if [[ -z "$P12_BASE64" || -z "$P12_PASSWORD" ]]; then
+            echo "::error::signing secrets missing (docs/SIGNING.md); releases are never ad-hoc"
+            exit 1
+          fi
+          NMR_SIGNING_DIR="$RUNNER_TEMP/nemura-signing"
+          echo "NMR_SIGNING_DIR=$NMR_SIGNING_DIR" >> "$GITHUB_ENV" # scripts/sign.sh reads it
+          mkdir -p "$NMR_SIGNING_DIR" && chmod 700 "$NMR_SIGNING_DIR"
+          printf '%s' "$P12_BASE64" | base64 --decode > "$NMR_SIGNING_DIR/identity.p12"
+          openssl rand -hex 32 > "$NMR_SIGNING_DIR/keychain-password"
+          password="$(cat "$NMR_SIGNING_DIR/keychain-password")"
+          kc="$NMR_SIGNING_DIR/signing.keychain-db"
+          security create-keychain -p "$password" "$kc"
+          security set-keychain-settings "$kc"
+          security unlock-keychain -p "$password" "$kc"
+          security import "$NMR_SIGNING_DIR/identity.p12" -k "$kc" -P "$P12_PASSWORD" \
+            -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$kc" \
+            >/dev/null
+          rm -f "$NMR_SIGNING_DIR/identity.p12"
+
+      - name: Build plugins, C++ tests and app
+        run: scripts/build.sh all
+
+      - name: Signed with the project identity, not ad-hoc
+        run: |
+          source config/product.env
+          plugins="build/plugins/$NMR_PRODUCT_NAME"
+          for bundle in "build/app/$NMR_PRODUCT_NAME.app" "$plugins".{clap,vst3,component}; do
+            codesign -dv --verbose=2 "$bundle" 2>&1 | grep -qxF "Authority=$NMR_SIGNING_IDENTITY" ||
+              { echo "::error::$bundle is not signed with $NMR_SIGNING_IDENTITY"; exit 1; }
+          done
+
+      - name: CMake and SwiftPM compile the same sources
+        run: scripts/check-sources.sh
+
+      - name: Test
+        run: scripts/build.sh test
+
+      - name: Package
+        run: |
+          scripts/package.sh dmg
+          scripts/package.sh pkg
+
+      - name: Install the .pkg (every plugin format)
+        run: |
+          sudo installer -pkg build/dist/*-Plugins-*.pkg -target /
+          ls -la /Library/Audio/Plug-Ins/{CLAP,VST3,Components}
+
+      - name: Fetch the validators
+        run: |
+          tools="$RUNNER_TEMP/validators"
+          mkdir -p "$tools/pluginval" "$tools/clap"
+          releases=https://github.com/Tracktion/pluginval/releases/download
+          curl -fsSL -o "$tools/pluginval.zip" "$releases/$PLUGINVAL_VERSION/pluginval_macOS.zip"
+          ditto -x -k "$tools/pluginval.zip" "$tools/pluginval"
+          app="$(find "$tools/pluginval" -maxdepth 2 -name pluginval.app | head -1)"
+          requirement="anchor apple generic and certificate leaf[subject.OU] = \"$PLUGINVAL_TEAM_ID\""
+          codesign --verify --deep --strict -R="$requirement" "$app"
+          releases=https://github.com/free-audio/clap-validator/releases/download
+          curl -fsSL -o "$tools/clap.zip" "$releases/$CLAP_VALIDATOR_VERSION/$CLAP_VALIDATOR_ASSET"
+          echo "$CLAP_VALIDATOR_SHA256  $tools/clap.zip" | shasum -a 256 -c -
+          ditto -x -k "$tools/clap.zip" "$tools/clap"
+          clap="$(find "$tools/clap" -type f -name clap-validator | head -1)"
+          chmod +x "$clap"
+          echo "PLUGINVAL=$app/Contents/MacOS/pluginval" >> "$GITHUB_ENV"
+          echo "CLAP_VALIDATOR=$clap" >> "$GITHUB_ENV"
+
+      - name: Validate the installed plugins
+        env:
+          NMR_PLUGIN_INSTALL_DIR: /Library/Audio/Plug-Ins
+          NMR_SKIP_GUI_TESTS: "1"
+        run: scripts/validate.sh
+
+      - name: Checksums
+        run: scripts/package.sh checksums
+
+      - name: Keep the files (dry run)
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-dry-run
+          path: build/dist/
+          retention-days: 7
+
+      - name: Upload validator logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: validate-logs
+          path: build/validate/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Draft the GitHub Release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          source config/product.env
+          notes="$RUNNER_TEMP/notes.md"
+          {
+            echo "## $NMR_PRODUCT_NAME $NMR_VERSION"
+            echo
+            if [[ -f "docs/release-notes/$GITHUB_REF_NAME.md" ]]; then
+              cat "docs/release-notes/$GITHUB_REF_NAME.md"
+              echo
+            fi
+            echo "Not notarized by Apple: see the README for how to open the app and the installer."
+            echo
+            echo '### SHA-256'
+            echo
+            echo '```'
+            cat build/dist/SHA256SUMS
+            echo '```'
+          } > "$notes"
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
+            --title "$NMR_PRODUCT_NAME $NMR_VERSION" --notes-file "$notes" \
+            build/dist/*.dmg build/dist/*.pkg build/dist/SHA256SUMS
+
+      - name: Remove the signing keychain
+        if: always()
+        run: |
+          dir="${NMR_SIGNING_DIR:-$RUNNER_TEMP/nemura-signing}"
+          security delete-keychain "$dir/signing.keychain-db" 2>/dev/null || true
+          rm -rf "$dir"
