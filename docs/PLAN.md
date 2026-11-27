@@ -127,9 +127,13 @@ Legend: `[x]` done and verified, `[~]` in progress / partially verified, `[ ]` n
 
 ## Phase 5: polish, performance, release
 
-- [ ] `scripts/perf.sh` meets §7 budgets against the baselines
-- [ ] `.dmg` (app) and `.pkg` (AU/VST3/CLAP to /Library/Audio/Plug-Ins, per-format choices)
+- [ ] `scripts/perf.sh` meets §7 budgets against the baselines (2026-11-27, quiet machine: frame
+  pacing passes; CPU 0.6–0.8 points and footprint ~1.8 MiB over the reference; docs/BUDGET.md)
+- [x] `.dmg` (app) and `.pkg` (AU/VST3/CLAP to /Library/Audio/Plug-Ins, per-format choices):
+  `scripts/package.sh`; contents, signatures and choices checked locally, the install itself
+  in `release.yml`
 - [ ] `release.yml` on `v*`: build, test, validate, sign, package, GitHub Release + SHA-256
+  (written; first run waits for the signing secrets, docs/SIGNING.md)
 - [ ] Homebrew tap `nemura0/homebrew-tap` (casks `stereometer`, `stereometer-plugins`, self-updating)
 - [ ] README (English): features, install, unsigned-app steps, permission/privacy, DAW usage, build
 - [ ] `scripts/rename.sh` renames the product in one step (§3)

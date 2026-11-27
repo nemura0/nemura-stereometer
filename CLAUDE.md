@@ -15,6 +15,7 @@ scripts/build.sh app             # SwiftPM app + bundle + sign
 scripts/build.sh test            # C++ (ctest) + Swift tests
 scripts/install-plugins.sh       # copy CLAP/VST3/AU to ~/Library/Audio/Plug-Ins, reset AU cache
 scripts/validate.sh              # auval, pluginval (arm64 + x86_64), clap-validator, OOP AU test
+scripts/package.sh [dmg|pkg|checksums]  # build/dist: app .dmg, plugins .pkg, SHA256SUMS
 scripts/gen-config.sh [--check]  # regenerate Sources/Core/include/nmr/product_config.h
 scripts/fetch-deps.sh            # pinned CLAP / clap-wrapper / VST3 SDK / AudioUnitSDK into external/
 scripts/check-sources.sh         # CMake and SwiftPM compile the same Sources/{Core,Render,CoreC}
