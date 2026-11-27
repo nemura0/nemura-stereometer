@@ -139,4 +139,5 @@ Legend: `[x]` done and verified, `[~]` in progress / partially verified, `[ ]` n
 - [x] README (English): features, install, unsigned-app steps, permission/privacy, DAW usage, build
   (screenshots from `nmr_snapshot` in docs/images; an app GIF needs a screen recording by the owner)
 - [x] `scripts/rename.sh` renames the product in one step (§3)
-- [ ] **CHECKPOINT D** (release draft + README; then tag v1.0.0 and publish)
+- [x] **CHECKPOINT D** (release draft + README; then tag v1.0.0 and publish)
+  (approved and published 2026-11-27: v1.0.0, release run 46066373097; tap casks at 1.0.0)
