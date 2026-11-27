@@ -144,8 +144,12 @@ jobs:
           curl -fsSL -o "$tools/clap.zip" "$releases/$CLAP_VALIDATOR_VERSION/$CLAP_VALIDATOR_ASSET"
           echo "$CLAP_VALIDATOR_SHA256  $tools/clap.zip" | shasum -a 256 -c -
           ditto -x -k "$tools/clap.zip" "$tools/clap"
+          # The release zip wraps a tarball (GitHub Actions artifacts keep the executable bit so).
+          find "$tools/clap" -name '*.tar*' -exec tar -xf {} -C "$tools/clap" \;
           clap="$(find "$tools/clap" -type f -name clap-validator | head -1)"
+          [[ -n "$clap" ]] || { find "$tools/clap"; echo "::error::no clap-validator"; exit 1; }
           chmod +x "$clap"
+          "$clap" --version
           echo "PLUGINVAL=$app/Contents/MacOS/pluginval" >> "$GITHUB_ENV"
           echo "CLAP_VALIDATOR=$clap" >> "$GITHUB_ENV"
 
