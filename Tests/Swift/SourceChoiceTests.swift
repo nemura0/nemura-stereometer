@@ -100,6 +100,6 @@ struct SourceChoiceTests {
     MeterProbe.Report(
       phase: .starting, capturing: false, failedStep: "", status: 0, sampleRate: 0, channels: 0,
       rebuilds: 0, signal: "unknown", notice: nil, rendering: rendering, idle: false,
-      overlay: nil, menuBar: nil, source: source, version: "test")
+      frames: nil, overlay: nil, menuBar: nil, source: source, version: "test")
   }
 }

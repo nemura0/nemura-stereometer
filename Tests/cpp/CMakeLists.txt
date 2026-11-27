@@ -9,6 +9,7 @@ add_executable(nmr_tests
   files_test.cpp
   frame_ring_test.cpp
   frame_rate_test.cpp
+  frame_stats_test.cpp
   guides_test.cpp
   idle_test.cpp
   instance_sender_test.cpp

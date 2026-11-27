@@ -68,3 +68,38 @@ TEST_CASE("render view: stops in silence and starts again when sound arrives") {
   [view setSource:{} sampleRate:48000];  // the ring goes away first
   [window close];
 }
+
+TEST_CASE("render view: counts the frames that reach the screen") {
+  [NSApplication sharedApplication];
+  [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+  [NSApp finishLaunching];
+  NSWindow* window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 160, 160)
+                                                 styleMask:NSWindowStyleMaskBorderless
+                                                   backing:NSBackingStoreBuffered
+                                                     defer:NO];
+  window.releasedWhenClosed = NO;
+  const float background[4] = {0, 0, 0, 1};
+  NMR_OBJC(RenderView)* view =
+      [[NMR_OBJC(RenderView) alloc] initWithFrame:NSMakeRect(0, 0, 160, 160)
+                                       background:background];
+  window.contentView = view;
+  [window orderFrontRegardless];
+  if (!spinUntil(^bool { return view.isRendering == YES; }, 3)) {
+    WARN_MESSAGE(false, "the window never became visible: skipped");
+    [window close];
+    return;
+  }
+  // Silence: it draws for the trail plus 250 ms, then idles; every frame it drew is reported.
+  CHECK(spinUntil(^bool { return view.isIdle == YES; }, 10));
+  CHECK(spinUntil(^bool { return view.frameStats.frames > 0; }, 2));  // handlers run late
+  const nmr::FrameStats::Summary drawn = view.frameStats;
+  INFO("frames " << drawn.frames << ", presented " << drawn.presented << ", period "
+                 << drawn.period_ms << " ms, p50 " << drawn.p50_ms << " ms");
+  CHECK(drawn.presented > 3);
+  CHECK(drawn.period_ms >= 1000.0 / 240);
+  CHECK(drawn.period_ms <= 1000.0 / 30);
+  CHECK(drawn.intervals > 0);
+  [view resetFrameStats];
+  CHECK(view.frameStats.frames == 0);
+  [window close];
+}

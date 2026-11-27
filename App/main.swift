@@ -7,6 +7,9 @@
 //                                          instance of that name), report, exit
 //   --feed <file.wav>                      play the file in a loop instead of the system output
 //                                          (reproducible input; with --meter-probe too)
+//   --perf                                 with --meter-probe and --feed: the medium window in
+//                                          Lissajous, frame statistics after a 5 s warm-up
+//                                          (scripts/perf.sh app)
 //
 // Without options the app shows the meter window.
 import AppKit
@@ -56,11 +59,16 @@ let feed = optionValue("--feed").map { path in
     .absoluteURL.standardized
 }
 let instance = optionValue("--instance")
+if let problem = MeterProbe.perfProblem(arguments) {
+  FileHandle.standardError.write(Data((problem + "\n").utf8))
+  exit(64)
+}
 let probe = arguments.contains("--meter-probe")
   ? MeterProbe(
     seconds: probeSeconds("--meter-probe", default: MeterProbe.defaultSeconds),
     outputPath: optionValue("--out"),
-    source: instance.map(MeterProbe.Source.instance) ?? (feed != nil ? .file : nil))
+    source: instance.map(MeterProbe.Source.instance) ?? (feed != nil ? .file : nil),
+    perf: arguments.contains("--perf"))
   : nil
 let delegate = AppDelegate(probe: probe, feed: feed)
 NSApplication.shared.delegate = delegate

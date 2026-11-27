@@ -45,6 +45,19 @@ bool nmr_render_view_is_idle(void* view) {
   return view != nullptr && ((__bridge NMR_OBJC(RenderView)*)view).isIdle;
 }
 
+bool nmr_render_view_frame_stats(void* view, nmr_frame_stats* out) {
+  if (view == nullptr || out == nullptr) return false;
+  const nmr::FrameStats::Summary s = ((__bridge NMR_OBJC(RenderView)*)view).frameStats;
+  *out = {s.frames,     s.presented,  s.dropped,     s.intervals,  s.period_ms,
+          s.p1_ms,      s.p50_ms,     s.p99_ms,      s.max_ms,     s.worked,
+          s.over_period, s.cpu_p99_ms, s.cpu_max_ms, s.gpu_p99_ms, s.gpu_max_ms};
+  return true;
+}
+
+void nmr_render_view_reset_frame_stats(void* view) {
+  if (view != nullptr) [(__bridge NMR_OBJC(RenderView)*)view resetFrameStats];
+}
+
 nmr_capture* nmr_capture_create(void* view, nmr_capture_status_fn callback, void* context,
                                 bool sound_seen_before) {
   if (view == nullptr) return nullptr;

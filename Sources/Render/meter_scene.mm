@@ -271,9 +271,22 @@ bool MeterScene::render(id<MTLCommandBuffer> commands, id<MTLTexture> target,
 
 void MeterScene::drawFrame(id<CAMetalDrawable> drawable, const FrameTiming& timing) {
   if (drawable == nil || queue_ == nil) return;
+  const double started = CACurrentMediaTime();
   id<MTLCommandBuffer> commands = [queue_ commandBuffer];
   const auto scale = static_cast<float>(drawable.layer.contentsScale);
   if (!render(commands, drawable.texture, timing, scale)) return;
+  const std::shared_ptr<PresentedFrames> presented = presented_;
+  const double period = 1.0 / std::max(rate_.load(std::memory_order_relaxed), 1.0f);
+  [drawable addPresentedHandler:^(id<MTLDrawable> shown) {
+    const double time = shown.presentedTime;  // 0: never reached the screen
+    const std::lock_guard<std::mutex> lock(presented->mutex);
+    presented->stats.frame(time, period);
+  }];
+  const double cpu = CACurrentMediaTime() - started;
+  [commands addCompletedHandler:^(id<MTLCommandBuffer> done) {
+    const std::lock_guard<std::mutex> lock(presented->mutex);
+    presented->stats.work(cpu, done.GPUEndTime - done.GPUStartTime, period);
+  }];
   [commands presentDrawable:drawable];
   [commands commit];
   last_late_ = CACurrentMediaTime() > timing.target_time;  // encoded after its deadline
@@ -297,6 +310,16 @@ bool MeterScene::soundArrived(const FrameRingView& ring, uint64_t& seen, float* 
     first = end;
   }
   return false;
+}
+
+FrameStats::Summary MeterScene::frameStats() const {
+  const std::lock_guard<std::mutex> lock(presented_->mutex);
+  return presented_->stats.summary();
+}
+
+void MeterScene::resetFrameStats() {
+  const std::lock_guard<std::mutex> lock(presented_->mutex);
+  presented_->stats.reset();
 }
 
 }  // namespace nmr

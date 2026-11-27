@@ -271,6 +271,31 @@ bool nmr_render_view_apply(void* view, const nmr_settings* settings, const uint8
 bool nmr_render_view_is_rendering(void* view);
 bool nmr_render_view_is_idle(void* view);
 
+// How the meter's frames reached the screen since the last reset: dropped counts frames never
+// presented and display periods skipped between presented ones; the percentiles are of the
+// intervals between consecutive presented frames (Sources/Core/include/nmr/frame_stats.h).
+typedef struct nmr_frame_stats {
+  uint64_t frames;
+  uint64_t presented;
+  uint64_t dropped;
+  uint64_t intervals;
+  double period_ms;
+  double p1_ms;
+  double p50_ms;
+  double p99_ms;
+  double max_ms;
+  uint64_t worked;       // frames whose CPU and GPU time were measured
+  uint64_t over_period;  // of those, CPU plus GPU time over the display period
+  double cpu_p99_ms;     // render thread, frame start to commit
+  double cpu_max_ms;
+  double gpu_p99_ms;     // the frame's command buffer on the GPU
+  double gpu_max_ms;
+} nmr_frame_stats;
+
+// False for a NULL argument. Any thread.
+bool nmr_render_view_frame_stats(void* view, nmr_frame_stats* out);
+void nmr_render_view_reset_frame_stats(void* view);
+
 // ---- Thumbnails -------------------------------------------------------------------------------
 // Meter looks drawn offscreen from a built-in test signal by the meter's own renderer
 // (Sources/Render/include/nmr/thumbnail.h), for the mode picker.

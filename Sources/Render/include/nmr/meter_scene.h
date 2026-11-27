@@ -20,6 +20,7 @@
 #include <nmr/colormap.h>
 #include <nmr/dsp.h>
 #include <nmr/frame_rate.h>
+#include <nmr/frame_stats.h>
 #include <nmr/frame_ring.h>
 #include <nmr/guides.h>
 #include <nmr/idle.h>
@@ -102,6 +103,10 @@ class MeterScene final : public FrameDrawer {
   [[nodiscard]] uint64_t drawnFrames() const noexcept {
     return drawn_.load(std::memory_order_relaxed);
   }
+  // Any thread: how the frames committed since the last reset reached the screen (each one's
+  // presentedTime, at the rate it was drawn for; see nmr/frame_stats.h).
+  [[nodiscard]] FrameStats::Summary frameStats() const;
+  void resetFrameStats();
 
   void drawFrame(id<CAMetalDrawable> drawable, const FrameTiming& timing) override;
   // Draws one frame into `target` (the drawable's texture, or offscreen). False: skipped
@@ -115,6 +120,11 @@ class MeterScene final : public FrameDrawer {
   static bool soundArrived(const FrameRingView& ring, uint64_t& seen, float* scratch) noexcept;
 
  private:
+  // Shared with the drawables' presented handlers, which may run after the scene is gone.
+  struct PresentedFrames {
+    mutable std::mutex mutex;
+    FrameStats stats;  // guarded by mutex
+  };
   struct Pending {
     bool has_settings = false;
     MeterSettings settings;
@@ -133,6 +143,7 @@ class MeterScene final : public FrameDrawer {
   void (^on_idle_)(uint64_t) = nil;
   void (^on_rate_)(float, uint64_t) = nil;
   std::atomic<float> rate_{60};
+  std::shared_ptr<PresentedFrames> presented_ = std::make_shared<PresentedFrames>();
   std::atomic<FrameRateChoice> choice_{FrameRateChoice::kAuto};  // the newest setting
   std::atomic<bool> stepped_down_{false};  // the governor stepped down (until reconfigured)
   std::atomic<uint64_t> run_requested_{1};

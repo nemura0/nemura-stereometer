@@ -104,6 +104,14 @@ constexpr uint64_t kWakeLeewayNs = 10'000'000;
   return _background[3] >= 1.0f;
 }
 
+- (nmr::FrameStats::Summary)frameStats {
+  return _scene ? _scene->frameStats() : nmr::FrameStats::Summary{};
+}
+
+- (void)resetFrameStats {
+  if (_scene) _scene->resetFrameStats();
+}
+
 - (BOOL)isRendering {
   return _loop != nullptr && _loop->isRunning();
 }

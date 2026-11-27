@@ -68,7 +68,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       } else if let feed {
         probeTimerArmed = true
         sources.choose(.file(feed))
-        after(probe.seconds) { $0.finish(probe) }
+        if probe.perf {
+          preparePerf(overlay, menuBar)
+          let view = Unmanaged.passUnretained(overlay.meter.view).toOpaque()
+          after(MeterProbe.perfWarmUp) { delegate in
+            nmr_render_view_reset_frame_stats(view)
+            delegate.after(probe.seconds) { delegate in
+              var stats = nmr_frame_stats()
+              let frames = nmr_render_view_frame_stats(view, &stats)
+                ? MeterProbe.FramesReport(stats) : nil
+              delegate.after(MeterProbe.perfLinger) { $0.finish(probe, frames: frames) }
+            }
+          }
+        } else {
+          after(probe.seconds) { $0.finish(probe) }
+        }
       } else {
         arm(probe, overlay)
         overlay.startCapture(soundSeenBefore: false)
@@ -217,6 +231,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
   }
 
+  /// `--perf`: the conditions docs/BUDGET.md compares (the medium window, Lissajous). The
+  /// probe keeps no settings, and the window's saved frame stays as it was.
+  private func preparePerf(_ overlay: OverlayController, _ menuBar: MenuBarController) {
+    menuBar.model.mode = .lissajous
+    // Off for the rest of the run: setting the name back would bring the saved frame back.
+    overlay.window.setFrameAutosaveName("")
+    overlay.window.setFrame(MeterSize.medium.frame(around: overlay.window.frame), display: true)
+  }
+
   private func after(_ seconds: Double, _ work: @escaping @MainActor (AppDelegate) -> Void) {
     DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
       MainActor.assumeIsolated {
@@ -226,10 +249,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   /// Writes the probe's report and quits with its exit code.
-  private func finish(_ probe: MeterProbe) {
+  private func finish(_ probe: MeterProbe, frames: MeterProbe.FramesReport? = nil) {
     guard !probeDone else { return }
     probeDone = true
-    let report = MeterProbe.report(overlay, menuBar: menuBar, source: probe.source)
+    let report = MeterProbe.report(
+      overlay, menuBar: menuBar, source: probe.source, frames: frames)
     let code = MeterProbe.write(report, to: probe.outputPath)
     sources?.stop()
     // A capture still starting may be inside the permission prompt, and stopping it would wait

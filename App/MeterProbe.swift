@@ -26,6 +26,63 @@ struct MeterProbe: Sendable {
   }
 
   var source: Source? = nil
+  /// `--perf` (with `--feed`): the medium window in Lissajous, as docs/BUDGET.md measures; the
+  /// frame statistics start over after perfWarmUp, are taken the probe's seconds later, and the
+  /// app quits perfLinger after that.
+  var perf = false
+
+  /// What `scripts/perf.sh` waits before it samples.
+  static let perfWarmUp = 5.0
+  /// How long the app keeps running after the measured seconds, with its frame statistics
+  /// already taken: the script's last samples and footprint (which suspends the process for a
+  /// moment) land there, not in the statistics.
+  static let perfLinger = 30.0  // top under load runs well past its sample count
+
+  /// Why `--perf` cannot run with these arguments, or nil when it can (or is not given).
+  static func perfProblem(_ arguments: Arguments) -> String? {
+    guard arguments.contains("--perf") else { return nil }
+    guard arguments.contains("--meter-probe"), arguments.contains("--feed") else {
+      return "--perf needs --meter-probe and --feed <file.wav>"
+    }
+    return nil
+  }
+
+  /// How the meter's frames reached the screen (nmr_frame_stats).
+  struct FramesReport: Encodable, Equatable {
+    let frames: UInt64
+    let presented: UInt64
+    let dropped: UInt64
+    let intervals: UInt64
+    let periodMs: Double
+    let p1Ms: Double
+    let p50Ms: Double
+    let p99Ms: Double
+    let maxMs: Double
+    let worked: UInt64
+    let overPeriod: UInt64
+    let cpuP99Ms: Double
+    let cpuMaxMs: Double
+    let gpuP99Ms: Double
+    let gpuMaxMs: Double
+
+    init(_ stats: nmr_frame_stats) {
+      frames = stats.frames
+      presented = stats.presented
+      dropped = stats.dropped
+      intervals = stats.intervals
+      periodMs = stats.period_ms
+      p1Ms = stats.p1_ms
+      p50Ms = stats.p50_ms
+      p99Ms = stats.p99_ms
+      maxMs = stats.max_ms
+      worked = stats.worked
+      overPeriod = stats.over_period
+      cpuP99Ms = stats.cpu_p99_ms
+      cpuMaxMs = stats.cpu_max_ms
+      gpuP99Ms = stats.gpu_p99_ms
+      gpuMaxMs = stats.gpu_max_ms
+    }
+  }
 
   struct Report: Encodable {
     enum Phase: String, Encodable {
@@ -53,6 +110,8 @@ struct MeterProbe: Sendable {
     let notice: String?
     let rendering: Bool
     let idle: Bool
+    /// The meter's frames since the probe's seconds started (with `--perf`, since the warm-up).
+    let frames: FramesReport?
     let overlay: OverlayReport?
     let menuBar: MenuBarReport?
     /// With `--instance` or `--feed`: what the meter's source is.
@@ -215,15 +274,17 @@ struct MeterProbe: Sendable {
 
   /// The report for `overlay` now, following `source` (nil: the system output).
   @MainActor
+  /// `frames`: statistics taken earlier (--perf), instead of the view's now.
   static func report(
-    _ overlay: OverlayController?, menuBar: MenuBarController?, source: Source? = nil
+    _ overlay: OverlayController?, menuBar: MenuBarController?, source: Source? = nil,
+    frames taken: FramesReport? = nil
   ) -> Report {
     let version = String(cString: nmr_version())
     guard let overlay else {
       return Report(
         phase: .failed, capturing: false, failedStep: "meter view", status: -1, sampleRate: 0,
         channels: 0, rebuilds: 0, signal: "unknown", notice: nil, rendering: false, idle: false,
-        overlay: nil, menuBar: nil, source: nil, version: version)
+        frames: nil, overlay: nil, menuBar: nil, source: nil, version: version)
     }
     let meter = overlay.meter
     var (step, status, rate, channels) = ("", Int32(0), 0.0, 0)
@@ -234,11 +295,14 @@ struct MeterProbe: Sendable {
     }
     let phase = Report.Phase(meter.capture.phase)
     let view = Unmanaged.passUnretained(meter.view).toOpaque()
+    var stats = nmr_frame_stats()
+    let frames = taken ?? (nmr_render_view_frame_stats(view, &stats) ? FramesReport(stats) : nil)
     return Report(
       phase: phase, capturing: phase == .capturing, failedStep: step, status: status,
       sampleRate: rate, channels: channels, rebuilds: meter.capture.rebuilds,
       signal: Self.name(meter.capture.signal), notice: overlay.notice?.message,
       rendering: nmr_render_view_is_rendering(view), idle: nmr_render_view_is_idle(view),
+      frames: frames,
       overlay: OverlayReport(overlay),
       menuBar: menuBar.map { MenuBarReport($0, overlay: overlay) },
       source: source.flatMap { source in

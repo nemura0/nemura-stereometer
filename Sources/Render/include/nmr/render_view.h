@@ -34,6 +34,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)setSource:(nmr::FrameRingView)ring sampleRate:(double)sampleRate;
 // Main thread. Takes effect at the next frame; the background comes from initWithFrame.
 - (void)setSettings:(const nmr::MeterSettings&)settings;
+// Any thread. How the meter's frames reached the screen since the last reset (diagnostics).
+@property(nonatomic, readonly) nmr::FrameStats::Summary frameStats;
+- (void)resetFrameStats;
 #endif
 
 // Whether the render thread is currently running (for tests and diagnostics).
