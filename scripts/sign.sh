@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Signs bundles (app, .clap, .vst3, .component) with the self-signed identity created by
-# scripts/make-signing-identity.sh. Without it (e.g. a CI pull request) it signs ad-hoc and
-# warns: the build still runs, but the app's audio-capture permission will not survive rebuilds.
+# Signs bundles (app, .clap, .vst3, .component) and disk images (.dmg) with the self-signed
+# identity created by scripts/make-signing-identity.sh. Without it (e.g. a CI pull request) it
+# signs ad-hoc and warns: the build still runs, but the app's audio-capture permission will not
+# survive rebuilds.
 #
 #   scripts/sign.sh <bundle>...
 #
@@ -37,11 +38,14 @@ else
 fi
 
 for bundle in "$@"; do
-  if [[ ! -d "$bundle" ]]; then
-    echo "error: not a bundle: $bundle" >&2
+  if [[ ! -d "$bundle" && ! ( -f "$bundle" && "$bundle" == *.dmg ) ]]; then
+    echo "error: not a bundle or a disk image: $bundle" >&2
     exit 1
   fi
-  codesign --force --timestamp=none "${sign_args[@]}" "$bundle"
+  extra=()
+  # A disk image has no Info.plist to name it; codesign would take its file name.
+  if [[ -f "$bundle" ]]; then extra=(--identifier "$NMR_APP_BUNDLE_ID.dmg"); fi
+  codesign --force --timestamp=none "${sign_args[@]}" ${extra[@]+"${extra[@]}"} "$bundle"
   codesign --verify --strict --deep "$bundle"
   echo "signed ($label): $bundle"
 done
